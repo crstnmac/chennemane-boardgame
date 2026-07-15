@@ -1,0 +1,1 @@
+SOURCE=Poly Haven bark_brown_02 + plastered_wall (CC0)

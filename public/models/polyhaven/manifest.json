@@ -1,0 +1,27 @@
+[
+  {
+    "id": "fern_02",
+    "gltf": "/models/polyhaven/fern_02/fern_02_1k.gltf",
+    "source": "https://polyhaven.com/a/fern_02"
+  },
+  {
+    "id": "shrub_01",
+    "gltf": "/models/polyhaven/shrub_01/shrub_01_1k.gltf",
+    "source": "https://polyhaven.com/a/shrub_01"
+  },
+  {
+    "id": "grass_medium_01",
+    "gltf": "/models/polyhaven/grass_medium_01/grass_medium_01_1k.gltf",
+    "source": "https://polyhaven.com/a/grass_medium_01"
+  },
+  {
+    "id": "othonna_cerarioides",
+    "gltf": "/models/polyhaven/othonna_cerarioides/othonna_cerarioides_1k.gltf",
+    "source": "https://polyhaven.com/a/othonna_cerarioides"
+  },
+  {
+    "id": "searsia_lucida",
+    "gltf": "/models/polyhaven/searsia_lucida/searsia_lucida_1k.gltf",
+    "source": "https://polyhaven.com/a/searsia_lucida"
+  }
+]

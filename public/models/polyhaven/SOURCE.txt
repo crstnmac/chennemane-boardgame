@@ -1,0 +1,8 @@
+Poly Haven models (CC0 1.0) used as village vegetation.
+License: https://polyhaven.com/license
+
+- fern_02: https://polyhaven.com/a/fern_02
+- shrub_01: https://polyhaven.com/a/shrub_01
+- grass_medium_01: https://polyhaven.com/a/grass_medium_01
+- othonna_cerarioides: https://polyhaven.com/a/othonna_cerarioides
+- searsia_lucida: https://polyhaven.com/a/searsia_lucida

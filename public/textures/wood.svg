@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="500" viewBox="0 0 800 500">
+  <defs>
+    <linearGradient id="base" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#7a4a2e"/>
+      <stop offset="35%" stop-color="#5c3420"/>
+      <stop offset="70%" stop-color="#3f2416"/>
+      <stop offset="100%" stop-color="#2a160e"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fff" stop-opacity="0.12"/>
+      <stop offset="40%" stop-color="#fff" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#000" stop-opacity="0.18"/>
+    </linearGradient>
+    <filter id="soft" x="-10%" y="-10%" width="120%" height="120%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="3" seed="7" result="n"/>
+      <feColorMatrix type="matrix" values="0 0 0 0 0.25  0 0 0 0 0.12  0 0 0 0 0.05  0 0 0 0.25 0" in="n" result="t"/>
+      <feBlend in="SourceGraphic" in2="t" mode="multiply"/>
+    </filter>
+  </defs>
+  <rect width="800" height="500" fill="url(#base)"/>
+  <!-- long grain strokes -->
+  <g stroke-linecap="round" fill="none" opacity="0.35">
+    <path d="M-20 40 C120 30 200 55 380 42 S620 20 820 48" stroke="#2a140c" stroke-width="3"/>
+    <path d="M-20 78 C140 90 260 60 420 84 S640 100 820 72" stroke="#1a0c06" stroke-width="2"/>
+    <path d="M-20 120 C100 110 280 140 460 118 S680 100 820 130" stroke="#3d2214" stroke-width="4"/>
+    <path d="M-20 165 C160 180 300 150 480 172 S700 190 820 160" stroke="#24140c" stroke-width="2.5"/>
+    <path d="M-20 210 C130 200 250 230 440 208 S660 190 820 220" stroke="#1c1008" stroke-width="3"/>
+    <path d="M-20 255 C150 270 310 240 500 262 S720 280 820 250" stroke="#2e1a10" stroke-width="2"/>
+    <path d="M-20 300 C110 288 270 320 450 298 S680 280 820 310" stroke="#180e08" stroke-width="3.5"/>
+    <path d="M-20 345 C170 360 320 330 500 352 S710 370 820 340" stroke="#3a2014" stroke-width="2"/>
+    <path d="M-20 390 C120 378 260 410 440 388 S670 370 820 400" stroke="#1a0c06" stroke-width="3"/>
+    <path d="M-20 435 C140 450 300 420 480 442 S700 460 820 430" stroke="#2a160e" stroke-width="2.5"/>
+    <path d="M-20 475 C100 465 240 490 420 470 S650 455 820 480" stroke="#120a06" stroke-width="2"/>
+  </g>
+  <!-- lighter highlights between grains -->
+  <g stroke-linecap="round" fill="none" opacity="0.12">
+    <path d="M-20 55 C160 48 300 70 500 55 S700 40 820 62" stroke="#e8c49a" stroke-width="1.5"/>
+    <path d="M-20 145 C180 155 340 130 520 148 S720 165 820 140" stroke="#d4a878" stroke-width="1"/>
+    <path d="M-20 280 C150 270 320 295 500 278 S700 260 820 288" stroke="#e0b888" stroke-width="1.2"/>
+    <path d="M-20 410 C170 420 350 395 540 415 S720 430 820 405" stroke="#c89868" stroke-width="1"/>
+  </g>
+  <!-- knots -->
+  <g opacity="0.4">
+    <ellipse cx="180" cy="200" rx="18" ry="11" fill="#1a0c06" transform="rotate(-12 180 200)"/>
+    <ellipse cx="180" cy="200" rx="10" ry="6" fill="#3a2214" transform="rotate(-12 180 200)"/>
+    <ellipse cx="560" cy="320" rx="14" ry="9" fill="#140a06" transform="rotate(18 560 320)"/>
+    <ellipse cx="560" cy="320" rx="7" ry="4" fill="#2e1a10" transform="rotate(18 560 320)"/>
+  </g>
+  <rect width="800" height="500" fill="url(#sheen)"/>
+  <rect width="800" height="500" filter="url(#soft)" opacity="0.5"/>
+</svg>

@@ -1,0 +1,15 @@
+Seed / bead PBR from Poly Haven — leather_red_03
+https://polyhaven.com/a/leather_red_03
+License: CC0 1.0 — https://polyhaven.com/license
+
+Smooth lustrous red surface for gulaganji seeds (clear on dark board wood).
+Albedo uses coll1 map (this asset has no Diffuse key).
+
+1k JPG:
+  seed_diff.jpg     ← coll1
+  seed_diff_alt.jpg ← coll2 (alt colorway)
+  seed_nor_gl.jpg
+  seed_rough.jpg
+  seed_arm.jpg
+
+Applied via Blender MCP + tools/blender/apply_seed_leather_red.py

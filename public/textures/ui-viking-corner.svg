@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
+  <defs>
+    <linearGradient id="b" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f0d090"/>
+      <stop offset="40%" stop-color="#c9a050"/>
+      <stop offset="100%" stop-color="#6a4a20"/>
+    </linearGradient>
+    <linearGradient id="dark" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0%" stop-color="#3a2a14"/>
+      <stop offset="100%" stop-color="#a88840"/>
+    </linearGradient>
+  </defs>
+  <!-- L-bracket arm X -->
+  <rect x="2" y="2" width="30" height="7" rx="1" fill="url(#b)" stroke="#2a1c0c" stroke-width="0.8"/>
+  <!-- L-bracket arm Y -->
+  <rect x="2" y="2" width="7" height="30" rx="1" fill="url(#b)" stroke="#2a1c0c" stroke-width="0.8"/>
+  <!-- Rivet -->
+  <circle cx="5.5" cy="5.5" r="2.2" fill="url(#dark)" stroke="#1a1208" stroke-width="0.6"/>
+  <circle cx="5.5" cy="5.5" r="0.9" fill="#e8d090" opacity="0.7"/>
+  <!-- Knot notch -->
+  <path d="M12 5.5 H26 M5.5 12 V26" stroke="#5a3e18" stroke-width="1" opacity="0.45"/>
+</svg>

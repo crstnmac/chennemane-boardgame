@@ -1,0 +1,10 @@
+Open-source HDRIs used by Chennamane / Ali Guli Mane (Poly Haven, CC0).
+https://polyhaven.com/license
+
+wooden_lounge_1k.hdr
+  https://polyhaven.com/a/wooden_lounge
+  Active IBL for the traditional home / veranda play setting.
+
+kloofendal_48d_partly_cloudy_puresky_1k.hdr
+  https://polyhaven.com/a/kloofendal_48d_partly_cloudy_puresky
+  Outdoor sky (kept as asset; not used while playing indoors).

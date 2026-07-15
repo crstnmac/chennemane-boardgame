@@ -1,0 +1,49 @@
+{
+  "unit": "meters",
+  "coordinateSystem": "blender_z_up",
+  "gltfMapping": "three = (bx, bz, -by)",
+  "model": "coconut_shell.glb",
+  "materials": [
+    "CoconutHusk",
+    "CoconutFlesh"
+  ],
+  "textures": {
+    "husk": [
+      "husk_diff.jpg",
+      "husk_nor.jpg",
+      "husk_rough.jpg"
+    ],
+    "flesh": [
+      "flesh_diff.jpg",
+      "flesh_nor.jpg",
+      "flesh_rough.jpg"
+    ]
+  },
+  "stores": {
+    "S": {
+      "player": "S",
+      "label": "B-store",
+      "x": 0.52,
+      "y": -0.34,
+      "z": 0.0,
+      "rotZ": -0.35,
+      "seedRestZ": 0.01344,
+      "seedPackRadius": 0.03839,
+      "shellRadius": 0.062,
+      "shellDepth": 0.048
+    },
+    "N": {
+      "player": "N",
+      "label": "A-store",
+      "x": -0.52,
+      "y": 0.34,
+      "z": 0.0,
+      "rotZ": 2.8,
+      "seedRestZ": 0.01344,
+      "seedPackRadius": 0.03839,
+      "shellRadius": 0.062,
+      "shellDepth": 0.048
+    }
+  },
+  "notes": "Open coconut score bowls for captured beads (PBR husk + flesh)"
+}

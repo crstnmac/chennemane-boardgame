@@ -1,0 +1,7 @@
+Grass textures (Poly Haven, CC0)
+
+grass_path_3
+  https://polyhaven.com/a/grass_path_3
+  Files: grass_path_3_diff_1k.jpg, grass_path_3_nor_gl_1k.jpg, grass_path_3_rough_1k.jpg
+  License: CC0 1.0 — https://polyhaven.com/license
+  Used as the grass playing field around the dirt courtyard.

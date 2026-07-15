@@ -1,0 +1,8 @@
+Wood PBR from Poly Haven — kitchen_wood
+https://polyhaven.com/a/kitchen_wood
+License: CC0 1.0 — https://polyhaven.com/license
+
+Light pine/oak furniture wood — chosen for contrast with red gulaganji beads.
+1k JPG: wood_diff.jpg, wood_nor.jpg, wood_rough.jpg, wood_arm.jpg
+
+Applied via Blender MCP + tools/blender/apply_wood_table_worn.py

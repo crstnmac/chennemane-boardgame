@@ -1,0 +1,143 @@
+/**
+ * Chennamane — Great Hall
+ * Refined oak + bronze. Quiet craft, not costume jewelry.
+ */
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Outfit:wght@400;500;600;700&display=swap');
+
+:root {
+  --font-display: 'Cormorant Garamond', Georgia, 'Times New Roman', serif;
+  --font-ui: 'Outfit', system-ui, -apple-system, sans-serif;
+
+  /* Surfaces */
+  --bg-deep: #0e0b09;
+  --bg: #14100c;
+  --bg-elevated: #1a1510;
+  --bg-panel: rgba(22, 17, 13, 0.94);
+  --bg-panel-solid: #1a1510;
+
+  /* Edges — thin, muted bronze (not neon gold) */
+  --border: rgba(168, 132, 72, 0.18);
+  --border-strong: rgba(168, 132, 72, 0.32);
+  --border-iron: rgba(72, 64, 56, 0.55);
+
+  /*
+   * Type colors — WCAG 2.2 AA against --bg-deep (#0e0b09):
+   *  --ink ≥ 15:1 · --ink-dim ≥ 6.9:1 · --ink-faint ≥ 4.5:1
+   *  --accent-bright ≥ 8.6:1 · --danger-text ≥ 4.5:1
+   */
+  --ink: #efe6d6;
+  --ink-dim: #b0a088;
+  --ink-faint: #9a8c78;
+  --text: var(--ink);
+  --text-muted: var(--ink-dim);
+
+  /* Bronze accent */
+  --accent: #c4a050;
+  --accent-bright: #e0c989;
+  --accent-dim: #8a6a30;
+  --accent-soft: rgba(196, 160, 80, 0.14);
+  --focus: #e0c989;
+  --focus-ring: 0 0 0 2px var(--bg-deep), 0 0 0 4px var(--focus);
+  --gold: var(--accent);
+  --bronze: #c4a050;
+  --iron: #4a443e;
+
+  --you: #d4b878;
+  --you-soft: rgba(212, 184, 120, 0.14);
+  --ai: #b8b0c4;
+  --ai-soft: rgba(184, 176, 196, 0.14);
+
+  --danger: #c86058;
+  --danger-text: #f0b0a8;
+  --danger-soft: rgba(200, 96, 88, 0.14);
+  --success: #8aaa72;
+  --success-text: #c8e0b0;
+
+  --seed-a: #c43c2c;
+  --seed-b: #7a2218;
+  --seed-shine: #e8a090;
+
+  --wood: #3d2818;
+  --wood-light: #5c4030;
+  --wood-dark: #14100c;
+  --pit: #0c0a08;
+  --seed: var(--seed-a);
+  --seed-rim: var(--seed-b);
+
+  /* Sharp geometry — premium ancient HUDs use plates, not soft pills */
+  --radius-sm: 0;
+  --radius: 0;
+  --radius-lg: 0;
+  --radius-xl: 0;
+
+  --shadow-deep: 0 16px 40px rgba(0, 0, 0, 0.5);
+  --shadow-glow: 0 0 32px rgba(168, 132, 60, 0.06);
+  --shadow-inset:
+    inset 0 1px 0 rgba(255, 230, 190, 0.06),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.35);
+
+  color-scheme: dark;
+}
+
+/* ── Page shell ── */
+
+.surface-page {
+  background-color: var(--bg-deep);
+  background-image:
+    radial-gradient(ellipse 75% 45% at 50% 0%, rgba(70, 48, 28, 0.22) 0%, transparent 55%),
+    linear-gradient(180deg, rgba(14, 11, 9, 0.88), rgba(10, 8, 6, 0.94));
+}
+
+/*
+ * Panel system:
+ *  1. Dark fill (flat — no grain textures)
+ *  2. Single 1px bronze edge
+ *  3. Soft depth + top highlight
+ */
+.surface-panel,
+.surface-paper {
+  position: relative;
+  isolation: isolate;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-strong);
+  background:
+    linear-gradient(165deg, rgba(38, 28, 20, 0.96) 0%, rgba(14, 11, 9, 0.98) 100%);
+  box-shadow:
+    var(--shadow-deep),
+    var(--shadow-inset),
+    0 0 0 1px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.surface-panel::before,
+.surface-paper::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 0;
+  /* Faint inner line — one continuous reveal, not corner art */
+  box-shadow: inset 0 0 0 1px rgba(168, 132, 72, 0.08);
+}
+
+.surface-panel > *,
+.surface-paper > * {
+  position: relative;
+  z-index: 1;
+}
+
+.surface-metal {
+  border-radius: var(--radius);
+  border: 1px solid var(--border-strong);
+  background:
+    linear-gradient(180deg, rgba(90, 70, 40, 0.55), rgba(28, 20, 12, 0.9));
+  box-shadow: var(--shadow-inset);
+}
+
+.surface-field {
+  border-radius: var(--radius);
+  border: 1px solid var(--border-iron);
+  background: linear-gradient(180deg, #14100c, #0c0a08);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.45);
+}

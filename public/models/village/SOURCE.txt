@@ -1,0 +1,21 @@
+Village assets exported from Blender via Blender MCP + Poly Haven (CC0).
+
+Downloaded into Blender with PolyHaven integration, then exported as GLB
+(base origin on ground, Y-up) for the web client.
+
+Plants (CC0 — https://polyhaven.com/license):
+  - fern_02           → fern.glb
+  - shrub_01          → shrub.glb
+  - grass_medium_01   → grass_mid.glb, grass_tall.glb, grass_small.glb
+  - othonna_cerarioides → othonna.glb
+  - searsia_lucida    → searsia.glb
+
+Playing ground:
+  - playground.glb — Blender reference (grass field + dirt edge + dirt pad)
+  - Textures live in public/textures/playground/ (park_dirt, dry_ground_01, grass_path_2, …)
+  - R3F InfiniteMudGround rebuilds the same layers with those maps
+
+layout.json — instanced plant placement around the board (meters).
+
+Not included (too large for web after export):
+  - island_tree_01, tree_small_02 (60–100 MB each)

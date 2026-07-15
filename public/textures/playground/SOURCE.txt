@@ -1,0 +1,24 @@
+Playground ground textures (Poly Haven, CC0)
+License: https://polyhaven.com/license
+
+Downloaded via Poly Haven API + Blender MCP (port 9876).
+Layout designed in Blender collection "Playground" and exported to
+  public/models/village/playground.glb (reference mesh; R3F rebuilds layers).
+
+Active in the web client:
+  park_dirt       — dirt play pad under the board
+  dry_ground_01   — worn lip between pad and grass
+  grass_path_2    — outer grass playing field
+
+Also on disk (available for swaps):
+  brown_mud_dry
+  baseball_playground
+  sparse_grass
+
+Links:
+  https://polyhaven.com/a/park_dirt
+  https://polyhaven.com/a/dry_ground_01
+  https://polyhaven.com/a/grass_path_2
+  https://polyhaven.com/a/brown_mud_dry
+  https://polyhaven.com/a/baseball_playground
+  https://polyhaven.com/a/sparse_grass

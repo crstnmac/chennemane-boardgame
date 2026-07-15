@@ -1,0 +1,38 @@
+{
+  "name": "chennamane",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@react-spring/three": "^10.1.2",
+    "@react-spring/web": "^10.1.2",
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.6.1",
+    "@types/three": "^0.185.1",
+    "howler": "^2.2.4",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "three": "^0.185.1",
+    "workbox-window": "^7.4.1",
+    "zustand": "^5.0.5"
+  },
+  "devDependencies": {
+    "@types/howler": "^2.2.13",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^4.6.0",
+    "playwright": "^1.61.1",
+    "typescript": "~5.8.3",
+    "vite": "^7.0.4",
+    "vite-plugin-pwa": "^1.0.1",
+    "vitest": "^3.2.4"
+  }
+}

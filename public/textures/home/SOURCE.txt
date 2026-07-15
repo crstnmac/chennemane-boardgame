@@ -1,0 +1,21 @@
+Home / room textures (Poly Haven, CC0)
+License: https://polyhaven.com/license
+
+Active in HomeVeranda:
+  painted_plaster_wall / yellow_plaster / white_plaster_02 — interior walls
+  terracotta_floor_tiles — floor
+  rough_linen — play mat
+  rough_pine_door / wooden_panels — doors & woodwork
+  ceiling_interior — ceiling
+
+Also available:
+  plastered_wall_04, plastered_wall_05, clay_plaster, clay_floor_001
+
+Links:
+  https://polyhaven.com/a/painted_plaster_wall
+  https://polyhaven.com/a/yellow_plaster
+  https://polyhaven.com/a/rough_pine_door
+  https://polyhaven.com/a/wooden_panels
+  https://polyhaven.com/a/ceiling_interior
+  https://polyhaven.com/a/terracotta_floor_tiles
+  https://polyhaven.com/a/rough_linen

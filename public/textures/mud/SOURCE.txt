@@ -1,0 +1,7 @@
+Mud / ground textures (Poly Haven, CC0)
+
+brown_mud_03
+  https://polyhaven.com/a/brown_mud_03
+  Files: brown_mud_03_diff_1k.jpg, brown_mud_03_nor_gl_1k.jpg, brown_mud_03_rough_1k.jpg
+  License: CC0 1.0 — https://polyhaven.com/license
+  Used as the packed-earth courtyard (play pad) under the Ali Guli Mane board.
