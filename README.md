@@ -17,6 +17,27 @@ pnpm build     # production build + PWA
 pnpm preview   # serve dist
 ```
 
+## Deploy (Dokploy)
+
+Production image is a multi-stage **Vite build → nginx** static site (`Dockerfile`).
+
+**Dokploy**
+
+1. Create an application → **Dockerfile** build
+2. Set context to the repo root (Dockerfile at `/Dockerfile`)
+3. Expose / publish **port 80** (Traefik / domain routing)
+4. Health check path: `/healthz` (optional; image includes `HEALTHCHECK`)
+
+No env vars are required for the static game. Rebuild when `public/models` or `public/textures` change — they are copied at image build time.
+
+**Local smoke test**
+
+```bash
+docker build -t chennamane .
+docker run --rm -p 8080:80 chennamane
+# open http://localhost:8080
+```
+
 ## Features (MVP)
 
 - Hot-seat 2-player and vs AI (Easy / Medium)

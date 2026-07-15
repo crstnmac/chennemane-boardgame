@@ -1,0 +1,44 @@
+# Dependencies & build output
+node_modules
+dist
+dist-ssr
+dev-dist
+coverage
+.vite
+
+# Git / IDE / local
+.git
+.gitignore
+.gitattributes
+.DS_Store
+*.local
+*.log
+.env
+.env.*
+!.env.example
+
+# Docs & design tools (not needed at runtime)
+docs
+tools
+*.blend
+*.blend1
+Untitled.blend
+
+# Tests (optional: keep if you run tests in Docker build)
+tests
+scripts
+playwright-report
+test-results
+
+# Agent / editor junk
+.claude
+.grok
+.agents
+.cursor
+.vscode
+.idea
+
+# Large caches that should never ship
+**/.cache
+**/__pycache__
+*.pyc
