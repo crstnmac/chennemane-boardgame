@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useTexture } from '@react-three/drei';
 import * as THREE from 'three';
+import { TEXTURE_ANISOTROPY, textureUrl } from './quality';
 
 export type PbrMaps = {
   map: THREE.Texture;
@@ -22,7 +23,7 @@ export type BoardMaterialMaps = {
  * Poly Haven CC0 — see SOURCE.txt under each textures folder.
  * Wood: kitchen_wood (https://polyhaven.com/a/kitchen_wood) — light for red bead contrast
  */
-const PATHS = {
+const RAW_PATHS = {
   woodMap: '/textures/wood/wood_diff.jpg',
   woodNormal: '/textures/wood/wood_nor.jpg',
   woodRough: '/textures/wood/wood_rough.jpg',
@@ -44,6 +45,11 @@ const PATHS = {
   fleshNormal: '/textures/coconut/flesh_nor.jpg',
   fleshRough: '/textures/coconut/flesh_rough.jpg',
 } as const;
+
+/** Same keys, mobile devices get the 512px variants. */
+const PATHS = Object.fromEntries(
+  Object.entries(RAW_PATHS).map(([key, url]) => [key, textureUrl(url)]),
+) as Record<keyof typeof RAW_PATHS, string>;
 
 const ALL_URLS = Object.values(PATHS);
 
@@ -70,8 +76,8 @@ function configure(
   tex.rotation = opts.rotation ?? 0;
   tex.center.set(opts.center?.[0] ?? 0.5, opts.center?.[1] ?? 0.5);
   tex.offset.set(opts.offset?.[0] ?? 0, opts.offset?.[1] ?? 0);
-  // Cap anisotropy — 8 is costly on mobile GPUs during every shadow pass
-  tex.anisotropy = opts.anisotropy ?? 4;
+  // Cap anisotropy — each tap costs texture bandwidth on mobile GPUs
+  tex.anisotropy = opts.anisotropy ?? TEXTURE_ANISOTROPY;
   tex.colorSpace = opts.colorSpace;
   tex.needsUpdate = true;
 }

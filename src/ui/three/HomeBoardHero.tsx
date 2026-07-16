@@ -14,6 +14,7 @@ import {
 } from './sharedAssets';
 import { GroundContactShadow } from './GroundContactShadow';
 import { HomeVeranda } from './HomeVeranda';
+import { CONTACT_SHADOW_RESOLUTION, HERO_DPR, IS_MOBILE } from './quality';
 import { StudioLights } from './StudioLights';
 
 const HERO_PITS = Array.from({ length: 14 }, () => 5);
@@ -110,8 +111,8 @@ function HeroScene({ onReady }: { onReady: () => void }) {
       <fog attach="fog" args={['#1a120c', 4, 12]} />
       <StudioLights quality="hero" envIntensity={0.12} />
       <Suspense fallback={null}>
-        {/* Continuous lamp flicker — home canvas uses frameloop="always" */}
-        <HomeVeranda floorSize={6.5} dynamicLights />
+        {/* Continuous lamp flicker on desktop; static lamps on mobile (battery) */}
+        <HomeVeranda floorSize={6.5} dynamicLights={!IS_MOBILE} />
       </Suspense>
       <group>
         <BoardMesh />
@@ -124,7 +125,7 @@ function HeroScene({ onReady }: { onReady: () => void }) {
         blur={2.6}
         far={1.2}
         color="#1a1008"
-        resolution={256}
+        resolution={CONTACT_SHADOW_RESOLUTION}
         frames={40}
       />
     </>
@@ -141,9 +142,10 @@ export function HomeBoardHero() {
       <Suspense fallback={null}>
         <Canvas
           shadows={false}
-          dpr={[1, 1.5]}
-          // Always-on so lamp flicker stays smooth and consistent on home
-          frameloop={ready ? 'always' : 'demand'}
+          dpr={HERO_DPR}
+          // Desktop: always-on so lamp flicker stays smooth on home.
+          // Mobile: lamps are static, so stay demand-driven and idle at 0 fps.
+          frameloop={ready && !IS_MOBILE ? 'always' : 'demand'}
           gl={{
             antialias: true,
             alpha: false,

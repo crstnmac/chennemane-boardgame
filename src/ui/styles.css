@@ -28,6 +28,18 @@ body {
     radial-gradient(ellipse 80% 40% at 50% -5%, rgba(60, 42, 24, 0.28) 0%, transparent 50%),
     linear-gradient(180deg, #12100c 0%, #0e0b09 100%);
   background-attachment: fixed;
+  /* No pull-to-refresh / rubber-band while orbiting or tapping near edges */
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button,
+a,
+input[type='range'],
+select,
+[role='button'] {
+  /* Kill double-tap-to-zoom delay on touch devices */
+  touch-action: manipulation;
 }
 
 /* ── Focus (WCAG 2.4.7 / 2.4.11) ── */

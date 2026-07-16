@@ -28,6 +28,7 @@ import {
 } from './sharedAssets';
 import { GroundContactShadow } from './GroundContactShadow';
 import { HomeVeranda } from './HomeVeranda';
+import { BOARD_DPR, CONTACT_SHADOW_RESOLUTION, IS_LOW_POWER } from './quality';
 import { StudioLights, preloadPlayEnvironment } from './StudioLights';
 
 const MAX_SEEDS = 96;
@@ -35,6 +36,49 @@ const MAX_SEEDS = 96;
 // Play camera: elevated south view — pits readable, rings not edge-on
 const CAM_POS: [number, number, number] = [0, 1.42, 1.05];
 const CAM_TARGET: [number, number, number] = [0, 0.02, 0.02];
+const CAM_DIST = Math.hypot(
+  CAM_POS[0] - CAM_TARGET[0],
+  CAM_POS[1] - CAM_TARGET[1],
+  CAM_POS[2] - CAM_TARGET[2],
+);
+
+const BASE_FOV = 42;
+
+/**
+ * The board is wide (14 pits in two rows), framed for landscape. On narrow
+ * portrait viewports the horizontal FOV shrinks and crops the end pits.
+ * Pull the camera back only a little — any farther and it exits the room
+ * through the ceiling and leaves the lamp light — then widen the lens for
+ * the rest of the required coverage. Preserves the user's orbit direction.
+ */
+function ResponsiveFraming() {
+  const camera = useThree((s) => s.camera as THREE.PerspectiveCamera);
+  const size = useThree((s) => s.size);
+  const invalidate = useThree((s) => s.invalidate);
+  const target = useMemo(() => new THREE.Vector3(...CAM_TARGET), []);
+
+  useLayoutEffect(() => {
+    const aspect = size.width / Math.max(1, size.height);
+    const need = THREE.MathUtils.clamp(1.2 / aspect, 1, 2.2);
+    const distScale = Math.min(need, 1.25);
+    const offset = camera.position.clone().sub(target);
+    if (offset.lengthSq() < 1e-6) offset.set(...CAM_POS).sub(target);
+    offset.setLength(CAM_DIST * distScale);
+    camera.position.copy(target).add(offset);
+
+    const fovScale = need / distScale;
+    const halfBase = Math.tan(THREE.MathUtils.degToRad(BASE_FOV / 2));
+    camera.fov = Math.min(
+      2 * THREE.MathUtils.radToDeg(Math.atan(halfBase * fovScale)),
+      70,
+    );
+    camera.updateProjectionMatrix();
+    camera.lookAt(target);
+    invalidate();
+  }, [camera, size, target, invalidate]);
+
+  return null;
+}
 
 function isAiPhase(p: TurnPhase) {
   return p === 'ai-thinking' || p === 'ai-preview' || p === 'ai-playing';
@@ -749,6 +793,7 @@ function Scene() {
   return (
     <>
       <Stability />
+      <ResponsiveFraming />
       <RenderWake frames={100} />
       <StoreInvalidator />
       {/* Warm night room — bright enough to read pits; static lights only */}
@@ -777,7 +822,7 @@ function Scene() {
         blur={2.6}
         far={1.4}
         color="#1a1008"
-        resolution={256}
+        resolution={CONTACT_SHADOW_RESOLUTION}
         frames={40}
       />
 
@@ -827,10 +872,10 @@ export function BlenderBoard() {
       <Canvas
         // Soft board shadow via GroundContactShadow only — no realtime cube/map shadows
         shadows={false}
-        dpr={[1, 1.5]}
+        dpr={BOARD_DPR}
         frameloop="demand"
         gl={{
-          antialias: true,
+          antialias: !IS_LOW_POWER,
           alpha: false,
           powerPreference: 'high-performance',
           failIfMajorPerformanceCaveat: false,

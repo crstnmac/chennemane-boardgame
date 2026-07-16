@@ -45,6 +45,7 @@ import {
 } from './sharedAssets';
 import { GroundContactShadow } from './GroundContactShadow';
 import { HomeVeranda } from './HomeVeranda';
+import { HERO_DPR } from './quality';
 import { StudioLights } from './StudioLights';
 
 const MAX_SEEDS = 90;
@@ -680,7 +681,7 @@ export function TourBoard(props: TourBoardProps) {
       <Suspense fallback={<TourFallback />}>
         <Canvas
           shadows={false}
-          dpr={[1, 1.5]}
+          dpr={HERO_DPR}
           frameloop="always"
           gl={{
             antialias: true,

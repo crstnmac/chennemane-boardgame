@@ -1,15 +1,17 @@
 import { Suspense, useLayoutEffect } from 'react';
 import { Environment, useEnvironment } from '@react-three/drei';
 import { useThree } from '@react-three/fiber';
+import { textureUrl } from './quality';
 
 export type LightQuality = 'hero' | 'play';
 
 /**
  * Indoor IBL — Poly Haven wooden_lounge (CC0).
  * Play mode adds static board-readable fill; home relies more on lamp flicker.
+ * Mobile devices get the half-resolution copy under /hdr-mobile/.
  * @see public/hdr/SOURCE.txt
  */
-export const PLAY_ENV_HDR = '/hdr/wooden_lounge_1k.hdr';
+export const PLAY_ENV_HDR = textureUrl('/hdr/wooden_lounge_1k.hdr');
 
 export const OUTDOOR_ENV_HDR = '/hdr/kloofendal_48d_partly_cloudy_puresky_1k.hdr';
 

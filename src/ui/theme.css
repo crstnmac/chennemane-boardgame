@@ -2,7 +2,8 @@
  * Chennamane — Great Hall
  * Refined oak + bronze. Quiet craft, not costume jewelry.
  */
-@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Outfit:wght@400;500;600;700&display=swap');
+/* Fonts are loaded via <link> in index.html — a CSS @import here would
+   block first paint behind a bundle → fonts.googleapis.com request chain. */
 
 :root {
   --font-display: 'Cormorant Garamond', Georgia, 'Times New Roman', serif;

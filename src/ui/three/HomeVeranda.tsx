@@ -2,6 +2,7 @@ import { useLayoutEffect, useMemo, useRef } from 'react';
 import { useTexture } from '@react-three/drei';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
+import { ROOM_TEXTURE_ANISOTROPY, textureUrl } from './quality';
 
 type Maps = {
   map: THREE.Texture;
@@ -10,10 +11,16 @@ type Maps = {
 };
 
 function usePbrMaps(urls: [string, string, string], invalidate: () => void): Maps {
-  const [map, normalMap, roughnessMap] = useTexture(urls, (loaded) => {
+  // Mobile devices load the 512px variants (scripts/build-mobile-assets.sh)
+  const resolved = useMemo(
+    () => urls.map(textureUrl) as [string, string, string],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- literal arrays; keyed by contents
+    [urls[0], urls[1], urls[2]],
+  );
+  const [map, normalMap, roughnessMap] = useTexture(resolved, (loaded) => {
     for (const t of Array.isArray(loaded) ? loaded : [loaded]) {
       t.wrapS = t.wrapT = THREE.RepeatWrapping;
-      t.anisotropy = 8;
+      t.anisotropy = ROOM_TEXTURE_ANISOTROPY;
       t.needsUpdate = true;
     }
     invalidate();
