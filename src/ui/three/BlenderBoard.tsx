@@ -36,11 +36,6 @@ const MAX_SEEDS = 96;
 // Play camera: elevated south view — pits readable, rings not edge-on
 const CAM_POS: [number, number, number] = [0, 1.42, 1.05];
 const CAM_TARGET: [number, number, number] = [0, 0.02, 0.02];
-const CAM_DIST = Math.hypot(
-  CAM_POS[0] - CAM_TARGET[0],
-  CAM_POS[1] - CAM_TARGET[1],
-  CAM_POS[2] - CAM_TARGET[2],
-);
 
 const BASE_FOV = 42;
 
@@ -49,31 +44,60 @@ const BASE_FOV = 42;
  * portrait viewports the horizontal FOV shrinks and crops the end pits.
  * Pull the camera back only a little — any farther and it exits the room
  * through the ceiling and leaves the lamp light — then widen the lens for
- * the rest of the required coverage. Preserves the user's orbit direction.
+ * the rest of the required coverage.
+ *
+ * Runs only when the viewport SHAPE changes. R3F publishes a fresh `size`
+ * object on any re-measure (scroll, URL-bar collapse, spurious observer
+ * callbacks), so reframing unconditionally would stomp the user's pinch-zoom
+ * mid-game. On a real aspect change the current zoom is rescaled relative to
+ * the previous baseline, never reset.
  */
 function ResponsiveFraming() {
   const camera = useThree((s) => s.camera as THREE.PerspectiveCamera);
   const size = useThree((s) => s.size);
   const invalidate = useThree((s) => s.invalidate);
   const target = useMemo(() => new THREE.Vector3(...CAM_TARGET), []);
+  const applied = useRef<{ aspect: number; distScale: number } | null>(null);
 
   useLayoutEffect(() => {
     const aspect = size.width / Math.max(1, size.height);
-    const need = THREE.MathUtils.clamp(1.2 / aspect, 1, 2.2);
+    const prev = applied.current;
+    if (prev && Math.abs(aspect - prev.aspect) < 0.02) return;
+
+    const need = THREE.MathUtils.clamp(1.35 / aspect, 1, 2.4);
     const distScale = Math.min(need, 1.25);
     const offset = camera.position.clone().sub(target);
     if (offset.lengthSq() < 1e-6) offset.set(...CAM_POS).sub(target);
-    offset.setLength(CAM_DIST * distScale);
+    const zoomRatio = distScale / (prev?.distScale ?? 1);
+    offset.setLength(
+      THREE.MathUtils.clamp(offset.length() * zoomRatio, 0.95, 4.5),
+    );
     camera.position.copy(target).add(offset);
+
+    // Portrait: bias the view upward — the bottom status bar covers more of
+    // the screen than the top HUD, so the visual center sits above middle.
+    if (aspect < 1) {
+      camera.setViewOffset(
+        size.width,
+        size.height,
+        0,
+        size.height * 0.045,
+        size.width,
+        size.height,
+      );
+    } else {
+      camera.clearViewOffset();
+    }
 
     const fovScale = need / distScale;
     const halfBase = Math.tan(THREE.MathUtils.degToRad(BASE_FOV / 2));
     camera.fov = Math.min(
       2 * THREE.MathUtils.radToDeg(Math.atan(halfBase * fovScale)),
-      70,
+      72,
     );
     camera.updateProjectionMatrix();
     camera.lookAt(target);
+    applied.current = { aspect, distScale };
     invalidate();
   }, [camera, size, target, invalidate]);
 

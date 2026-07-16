@@ -592,7 +592,13 @@
 }
 
 @media (max-width: 640px) {
-  .hud-meta-title {
+  /* Title + subtitle collide with the top-right button row on phones */
+  .hud-meta {
+    display: none;
+  }
+
+  /* Row legend: letter only — the subtitle pushes the chip off-screen */
+  .row-initial-sub {
     display: none;
   }
 
