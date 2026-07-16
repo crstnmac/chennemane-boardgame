@@ -98,11 +98,15 @@ function ShellLabel({
   title: string;
 }) {
   const [wx, wy, wz] = storeWorldPosition(side);
+  // Park the label beside the bowl (not in the opening) so the husk rim
+  // stays readable — especially on small mobile viewports where a centered
+  // Html badge used to cover the shell and read as a flat dark disc.
+  const sideNudge = side === 'S' ? 0.075 : -0.075;
   return (
     <Html
-      position={[wx, wy + 0.1, wz]}
+      position={[wx + sideNudge, wy + 0.11, wz]}
       center
-      distanceFactor={1.3}
+      distanceFactor={1.5}
       style={{ pointerEvents: 'none', userSelect: 'none' }}
       zIndexRange={[12, 0]}
     >

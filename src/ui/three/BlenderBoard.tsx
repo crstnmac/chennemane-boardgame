@@ -41,10 +41,10 @@ const BASE_FOV = 42;
 
 /**
  * The board is wide (14 pits in two rows), framed for landscape. On narrow
- * portrait viewports the horizontal FOV shrinks and crops the end pits.
- * Pull the camera back only a little — any farther and it exits the room
- * through the ceiling and leaves the lamp light — then widen the lens for
- * the rest of the required coverage.
+ * portrait viewports the horizontal FOV shrinks and crops the end pits +
+ * coconut shells. Pull the camera back only a little — any farther and it
+ * exits the room through the ceiling and leaves the lamp light — then widen
+ * the lens for the rest of the required coverage.
  *
  * Runs only when the viewport SHAPE changes. R3F publishes a fresh `size`
  * object on any re-measure (scroll, URL-bar collapse, spurious observer
@@ -64,8 +64,10 @@ function ResponsiveFraming() {
     const prev = applied.current;
     if (prev && Math.abs(aspect - prev.aspect) < 0.02) return;
 
-    const need = THREE.MathUtils.clamp(1.35 / aspect, 1, 2.4);
-    const distScale = Math.min(need, 1.25);
+    // Cover board + coconut shells (±0.52 world X). Tighter than the original
+    // 1.35 fill-the-floor framing, but not so tight that portrait crops shells.
+    const need = THREE.MathUtils.clamp(1.28 / aspect, 1, 2.25);
+    const distScale = Math.min(need, 1.2);
     const offset = camera.position.clone().sub(target);
     if (offset.lengthSq() < 1e-6) offset.set(...CAM_POS).sub(target);
     const zoomRatio = distScale / (prev?.distScale ?? 1);
@@ -81,7 +83,7 @@ function ResponsiveFraming() {
         size.width,
         size.height,
         0,
-        size.height * 0.045,
+        size.height * 0.035,
         size.width,
         size.height,
       );
@@ -93,7 +95,7 @@ function ResponsiveFraming() {
     const halfBase = Math.tan(THREE.MathUtils.degToRad(BASE_FOV / 2));
     camera.fov = Math.min(
       2 * THREE.MathUtils.radToDeg(Math.atan(halfBase * fovScale)),
-      72,
+      68,
     );
     camera.updateProjectionMatrix();
     camera.lookAt(target);

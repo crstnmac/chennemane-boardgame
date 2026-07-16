@@ -49,17 +49,21 @@ export function toStudioMaterial(
   maps?: BoardMaterialMaps,
 ): THREE.MeshPhysicalMaterial {
   if (isCoconutHusk(src)) {
+    // Warm lift so bowls read on low-env play lighting / mobile IBL
     const mat = new THREE.MeshPhysicalMaterial({
       name: 'CoconutHusk',
-      color: new THREE.Color('#8a4a22'),
+      color: new THREE.Color('#b86a38'),
       metalness: 0.02,
-      roughness: 0.92,
-      envMapIntensity: 0.28,
-      clearcoat: 0.06,
-      clearcoatRoughness: 0.65,
-      sheen: 0.25,
-      sheenColor: new THREE.Color('#c47838'),
-      sheenRoughness: 0.85,
+      roughness: 0.88,
+      envMapIntensity: 0.38,
+      clearcoat: 0.08,
+      clearcoatRoughness: 0.6,
+      sheen: 0.3,
+      sheenColor: new THREE.Color('#d48848'),
+      sheenRoughness: 0.8,
+      // Soft self-light so rims don’t collapse to a dark disc at distance
+      emissive: new THREE.Color('#3a1808'),
+      emissiveIntensity: 0.08,
       flatShading: false,
     });
     if (maps?.coconutHusk) applyPbr(mat, maps.coconutHusk, 1.1);
@@ -69,15 +73,17 @@ export function toStudioMaterial(
   if (isCoconutFlesh(src)) {
     const mat = new THREE.MeshPhysicalMaterial({
       name: 'CoconutFlesh',
-      color: new THREE.Color('#f2e8d4'),
+      color: new THREE.Color('#f6ecda'),
       metalness: 0.0,
-      roughness: 0.48,
-      envMapIntensity: 0.45,
-      clearcoat: 0.4,
-      clearcoatRoughness: 0.25,
-      sheen: 0.15,
+      roughness: 0.45,
+      envMapIntensity: 0.55,
+      clearcoat: 0.35,
+      clearcoatRoughness: 0.28,
+      sheen: 0.18,
       sheenColor: new THREE.Color('#fff8ec'),
       sheenRoughness: 0.5,
+      emissive: new THREE.Color('#2a2010'),
+      emissiveIntensity: 0.04,
       flatShading: false,
     });
     if (maps?.coconutFlesh) applyPbr(mat, maps.coconutFlesh, 0.55);

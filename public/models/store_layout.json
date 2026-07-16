@@ -23,8 +23,8 @@
     "S": {
       "player": "S",
       "label": "B-store",
-      "x": 0.52,
-      "y": -0.34,
+      "x": 0.46,
+      "y": -0.28,
       "z": 0.0,
       "rotZ": -0.35,
       "seedRestZ": 0.01344,
@@ -35,8 +35,8 @@
     "N": {
       "player": "N",
       "label": "A-store",
-      "x": -0.52,
-      "y": 0.34,
+      "x": -0.46,
+      "y": 0.28,
       "z": 0.0,
       "rotZ": 2.8,
       "seedRestZ": 0.01344,
@@ -45,5 +45,5 @@
       "shellDepth": 0.048
     }
   },
-  "notes": "Open coconut score bowls for captured beads (PBR husk + flesh)"
+  "notes": "Open coconut score bowls for captured beads (PBR husk + flesh). Positions tucked in slightly so portrait mobile keeps both shells in frame."
 }

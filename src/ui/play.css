@@ -321,7 +321,8 @@
 }
 
 .play-hud .hud-icon,
-.play-hud .hud-chip {
+.play-hud .hud-chip,
+.play-hud .hud-speed {
   pointer-events: auto;
 }
 
@@ -602,20 +603,62 @@
     display: none;
   }
 
-  .hud-tr .hud-chip:not(.is-danger):not(.is-on) {
-    display: none;
+  /* Compact top chrome so Back + undo/redo/skip + Hints + Resign fit */
+  .hud-tr {
+    gap: 0.28rem;
+    max-width: calc(100% - 3.75rem);
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .hud-icon {
+    width: 2.5rem;
+    height: 2.5rem;
+    min-width: 2.5rem;
+    min-height: 2.5rem;
+    font-size: 0.92rem;
+  }
+
+  .hud-chip {
+    height: 2.5rem;
+    min-height: 2.5rem;
+    padding: 0 0.65rem;
+    font-size: 0.7rem;
+    letter-spacing: 0.06em;
   }
 
   .hud-score-value {
-    font-size: 2.1rem;
+    font-size: 2rem;
   }
 
   .hud-score-n {
-    top: max(3.8rem, calc(env(safe-area-inset-top) + 3rem));
+    top: max(3.6rem, calc(env(safe-area-inset-top) + 2.85rem));
   }
 
+  /*
+   * South score bottom-left; speed stays bottom-right.
+   * Previously both sat on the right and stacked on top of each other
+   * (label + TURN cue clipped by the speed panel).
+   */
   .hud-score-s {
-    bottom: max(5rem, calc(env(safe-area-inset-bottom) + 4rem));
+    bottom: max(5.4rem, calc(env(safe-area-inset-bottom) + 4.6rem));
+    right: auto;
+    left: max(1rem, env(safe-area-inset-left));
+    align-items: flex-start;
+    text-align: left;
+  }
+
+  .hud-objective {
+    width: min(28rem, calc(100% - 1.5rem));
+    padding: 0.55rem 0.85rem 0.6rem;
+  }
+
+  .hud-objective-main {
+    font-size: clamp(1.05rem, 4.5vw, 1.35rem);
+  }
+
+  .hud-objective-sub {
+    font-size: 0.8rem;
   }
 }
 
@@ -1546,9 +1589,28 @@
 @media (max-width: 640px) {
   .hud-speed {
     top: auto;
-    bottom: max(5.5rem, calc(env(safe-area-inset-bottom) + 4.8rem));
+    bottom: max(5.4rem, calc(env(safe-area-inset-bottom) + 4.6rem));
     right: max(0.65rem, env(safe-area-inset-right));
     left: auto;
+    padding: 0.32rem 0.45rem 0.36rem;
+  }
+
+  .travel-speed.is-compact {
+    min-width: 6.25rem;
+    max-width: 8.5rem;
+  }
+
+  /* Coconut score labels — smaller Html so they don’t dominate the board */
+  .shell-label {
+    padding: 0.2rem 0.35rem 0.22rem;
+  }
+
+  .shell-label-title {
+    font-size: 0.48rem;
+  }
+
+  .shell-label-score {
+    font-size: 0.9rem;
   }
 }
 
