@@ -26,6 +26,7 @@ export function GameScreen() {
   const hintsEnabled = useGameStore((s) => s.hintsEnabled);
   const aiDifficulty = useGameStore((s) => s.aiDifficulty);
   const travelSpeed = useGameStore((s) => s.settings.travelSpeed);
+  const displayHand = useGameStore((s) => s.displayHand);
   const updateSettings = useGameStore((s) => s.updateSettings);
 
   const undo = useGameStore((s) => s.undo);
@@ -258,6 +259,18 @@ export function GameScreen() {
             onChange={(n) => updateSettings({ travelSpeed: n })}
           />
         </div>
+
+        {displayHand !== null && displayHand > 0 && (
+          <div
+            className="hand-tray"
+            role="status"
+            aria-live="polite"
+            aria-label={`${displayHand} seed${displayHand === 1 ? '' : 's'} remaining`}
+          >
+            <span className="hand-tray-kicker">Remaining</span>
+            <span className="hand-tray-count">{displayHand}</span>
+          </div>
+        )}
 
         <div
           className={[

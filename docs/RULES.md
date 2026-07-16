@@ -47,8 +47,10 @@ If you have no seeds on your row but the board is not terminal, you **pass** and
 - Terminal when:
   - a player resigns, or
   - the board is empty, or
-  - **exactly one residual seed** remains **and** the player is not mid forced second sowing (`sowingsUsedThisTurn === 0`).
+  - **exactly one residual seed** remains **and** the player is not mid forced second sowing (`sowingsUsedThisTurn === 0`), or
+  - **deadlock**: too many consecutive turn-ends (passes included) without a capture — 12 when ≤4 seeds remain on the board, 40 otherwise.
 - A true empty board is effectively unreachable under saada/capture: every sowing leaves the last drop in place. A lone residual seed can only walk the ring with empty captures, so the match ends with that seed **unclaimed** (not added to either score).
+- The deadlock rule exists because low-seed endgames (e.g. one bead per side) can cycle forever with both players dodging each other's saada — verified exhaustively for board totals 2–4. Deadlocked seeds are **unclaimed** in a single match; in multi-round mode a deadlock ends the **board** (round) and reseeding proceeds as usual, with the residue following the residual policy.
 - If a capture leaves one seed on your row, you still take the forced second sowing; the match ends when that turn completes.
 - Winner: higher score (resign → opponent wins). Ties are draws.
 

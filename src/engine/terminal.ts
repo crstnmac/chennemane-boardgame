@@ -9,9 +9,32 @@ import type { GameState, PlayerId } from './types';
  * - seriesOver (multi-round finished)
  * - zero seeds on board (single / residual)
  * - residual ≤1 after turn not mid-second-sowing (unclaimed residual)
+ * - deadlock: too many consecutive turns without a capture
  * - empty-side end-match when no legal move
  * - seete: no legal moves for the solo player
  */
+
+/**
+ * Deadlock limits. With ≤4 seeds on the board the players can dodge each
+ * other's saada forever (verified exhaustively for totals 2–4), so a short
+ * fuse ends the round quickly; the long fuse is a safety net for any other
+ * capture-less cycle.
+ */
+export const QUIET_TURN_LIMIT_LOW_SEEDS = 12;
+export const QUIET_TURN_LIMIT = 40;
+
+/** True when play has gone too long without a capture to ever progress. */
+export function isDeadlocked(state: GameState): boolean {
+  // Kalah-style boards make progress via store deposits, which the quiet
+  // counter doesn't see; their endgames terminate via empty-side instead.
+  if (state.config.engineFamily === 'kalah' || state.config.storesInCircuit) {
+    return false;
+  }
+  const limit =
+    totalBoardSeeds(state) <= 4 ? QUIET_TURN_LIMIT_LOW_SEEDS : QUIET_TURN_LIMIT;
+  return state.quietTurns >= limit;
+}
+
 export function isTerminal(state: GameState): boolean {
   if (state.resigned !== null) return true;
   if (state.seriesOver) return true;
@@ -30,6 +53,10 @@ export function isTerminal(state: GameState): boolean {
     // appendMatchEndIfTerminal may reopen via tryAdvanceMultiRound.
     return true;
   }
+
+  // Deadlock: capture-less cycle (e.g. one bead per side dodging forever).
+  // Multi-round treats this as a board end too (reseed via tryAdvance).
+  if (isDeadlocked(state)) return true;
 
   // Empty-side end-match / seete: no legal move for current player and policy ends
   if (!hasLegalMove(state, state.toMove)) {

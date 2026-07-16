@@ -52,6 +52,15 @@ export type PitHighlightKind =
   | 'capture'
   | 'ai';
 
+export interface CaptureFlight {
+  id: number;
+  /** Store the beads travel to. */
+  side: 'S' | 'N';
+  pits: { pit: number; amount: number }[];
+}
+
+let captureFlightSeq = 0;
+
 const HISTORY_CAP = 200;
 
 /** Minimum time the "AI is thinking" state stays visible (ms). */
@@ -96,6 +105,16 @@ export interface GameSession {
   highlightKind: PitHighlightKind;
   /** Side that just captured (for coconut shell bounce). */
   lastCaptureSide: PlayerId | null;
+  /**
+   * One-shot event: captured beads fly from their pits into the capturer's
+   * coconut store. Consumers react to `id` changes; stale values are inert.
+   */
+  captureFlight: CaptureFlight | null;
+  /**
+   * Seeds remaining in hand during selection / sowing.
+   * `null` when not carrying. Updated on pickup / drop / continue.
+   */
+  displayHand: number | null;
   /** Direction shown during AI preview. */
   highlightDir: 'cw' | 'ccw' | null;
   selectedPit: PitIndex | null;
@@ -227,10 +246,12 @@ export const useGameStore = create<GameSession>((set, get) => ({
   highlightPitsExtra: [],
   highlightKind: 'none',
   lastCaptureSide: null,
+  captureFlight: null,
+  displayHand: null,
   highlightDir: null,
   selectedPit: null,
   pendingDirection: false,
-  hintsEnabled: true,
+  hintsEnabled: false,
   animationGeneration: 0,
   lastEvents: [],
   showResult: false,
@@ -294,6 +315,7 @@ export const useGameStore = create<GameSession>((set, get) => ({
       highlightPitsExtra: [],
       highlightKind: 'none',
       highlightDir: null,
+      displayHand: null,
       selectedPit: null,
       pendingDirection: false,
       hintsEnabled: settings.hintsDefault,
@@ -316,12 +338,14 @@ export const useGameStore = create<GameSession>((set, get) => ({
   },
 
   selectPit: (pit) => {
-    const { committed, inputLocked, mode, humanPlayer, thinking } = get();
+    const { committed, inputLocked, mode, humanPlayer, thinking, displayPits } =
+      get();
     if (!committed || inputLocked || thinking || isTerminal(committed)) return;
     if (mode === 'ai' && committed.toMove !== humanPlayer) return;
     const legal = getLegalMoves(committed);
     if (!legal.some((m) => m.startPit === pit)) return;
 
+    const hand = displayPits[pit] ?? committed.pits[pit] ?? 0;
     const dirMode = committed.config.directionMode;
     sfx.select(pit);
     if (dirMode === 'fixedCcw') {
@@ -340,8 +364,9 @@ export const useGameStore = create<GameSession>((set, get) => ({
       highlightPit: pit,
       highlightPitsExtra: [],
       highlightKind: 'select',
+      displayHand: hand > 0 ? hand : null,
       statusMessage: 'Choose direction',
-      statusDetail: `${INDEX_TO_LABEL[pit] ?? pit}: anti-clockwise or clockwise.`,
+      statusDetail: `${INDEX_TO_LABEL[pit] ?? pit} · ${hand} remaining.`,
     });
   },
 
@@ -352,6 +377,7 @@ export const useGameStore = create<GameSession>((set, get) => ({
       highlightPit: null,
       highlightPitsExtra: [],
       highlightKind: 'none',
+      displayHand: null,
       statusMessage: 'Your turn',
       statusDetail: 'Tap a legal pit on your row.',
     }),
@@ -401,6 +427,7 @@ export const useGameStore = create<GameSession>((set, get) => ({
       highlightPitsExtra: [],
       highlightKind: 'none',
       highlightDir: null,
+      displayHand: null,
       showResult: isTerminal(current),
       statusMessage: isTerminal(current) ? 'Game over' : 'Undid move',
       statusDetail: isTerminal(current)
@@ -436,6 +463,7 @@ export const useGameStore = create<GameSession>((set, get) => ({
       highlightPitsExtra: [],
       highlightKind: 'none',
       highlightDir: null,
+      displayHand: null,
       showResult: isTerminal(current),
       turnPhase: phaseAfterState(current, s),
       statusMessage: isTerminal(current) ? 'Game over' : 'Redid move',
@@ -490,6 +518,7 @@ export const useGameStore = create<GameSession>((set, get) => ({
       highlightPitsExtra: [],
       highlightKind: 'none',
       highlightDir: null,
+      displayHand: null,
       turnPhase: phaseAfterState(c, session),
     });
     queueMicrotask(() => get().resolveLoop());
@@ -598,6 +627,7 @@ async function commitAndAnimate(
     highlightPitsExtra: [],
     highlightKind: 'none',
     highlightDir: null,
+    displayHand: null,
     statusMessage: statusHeadline(state, cur),
     statusDetail: statusDetailFor(state, cur),
   });
@@ -676,23 +706,33 @@ async function playEvents(
           highlightPit: e.pit,
           highlightPitsExtra: [],
           highlightKind: 'pickup',
+          displayHand: e.count,
           statusMessage: meta.isAi ? `${meta.actor} picks up` : 'Pick up',
-          statusDetail: `${e.count} from ${INDEX_TO_LABEL[e.pit] ?? e.pit}`,
+          statusDetail: `${e.count} remaining · from ${INDEX_TO_LABEL[e.pit] ?? e.pit}`,
         });
         if (pace.pickup) await sleep(pace.pickup);
         break;
       case 'drop':
-        pits[e.pit] = (pits[e.pit] ?? 0) + 1;
+        // Start hop first; only land the bead in displayPits when the hop
+        // finishes — otherwise the pit gains a seed while one is still flying
+        // (double-count / “teleport then hop” look).
+        // Remaining count decrements as each seed leaves the hand.
         useGameStore.setState({
-          displayPits: pits.slice(),
           highlightPit: e.pit,
           highlightPitsExtra: [],
           highlightKind: 'drop',
+          displayHand: e.remainingInHand > 0 ? e.remainingInHand : null,
+          statusDetail:
+            e.remainingInHand > 0
+              ? `${e.remainingInHand} remaining`
+              : 'Last seed',
         });
         if (!batch) {
           sfx.drop(e.pit);
           if (pace.drop) await sleep(pace.drop);
         }
+        pits[e.pit] = (pits[e.pit] ?? 0) + 1;
+        useGameStore.setState({ displayPits: pits.slice() });
         break;
       case 'continue':
         if (!batch) sfx.relay(e.pit);
@@ -702,7 +742,8 @@ async function playEvents(
           highlightPit: e.pit,
           highlightPitsExtra: [],
           highlightKind: 'continue',
-          statusDetail: `Continue: ${e.count} from ${INDEX_TO_LABEL[e.pit] ?? e.pit}`,
+          displayHand: e.count,
+          statusDetail: `Continue · ${e.count} remaining · ${INDEX_TO_LABEL[e.pit] ?? e.pit}`,
         });
         if (pace.continue) await sleep(pace.continue);
         break;
@@ -712,23 +753,39 @@ async function playEvents(
           highlightPit: e.emptyPit,
           highlightPitsExtra: [],
           highlightKind: 'saada',
+          displayHand: null,
           statusMessage: 'Saada',
           statusDetail: `${INDEX_TO_LABEL[e.emptyPit] ?? e.emptyPit} empty; capturing next.`,
         });
         if (pace.saada) await sleep(pace.saada);
         break;
       case 'capture': {
-        // Flash each capture bowl before clearing (collect animation)
-        const captureList = e.pits.filter((_, i) => (e.amounts[i] ?? 0) > 0);
+        const total = e.amounts.reduce((a, b) => a + b, 0);
         const allCap = e.pits.slice();
+
+        // Saada always emits a capture event — even when both bowls are empty.
+        // Skip the long collect/flight beat for zero-amount "no capture" ends.
+        if (total === 0) {
+          for (const p of e.pits) pits[p] = 0;
+          useGameStore.setState({
+            displayPits: pits.slice(),
+            highlightPit: allCap[0] ?? null,
+            highlightPitsExtra: allCap.slice(1),
+            highlightKind: 'saada',
+            displayHand: null,
+            statusMessage: 'Saada',
+            statusDetail: 'Nothing to capture — turn ends.',
+          });
+          if (pace.saada) await sleep(Math.min(220, pace.saada));
+          break;
+        }
+
+        // Flash each capture bowl before clearing (collect animation)
         useGameStore.setState({
           highlightPit: allCap[0] ?? null,
           highlightPitsExtra: allCap.slice(1),
           highlightKind: 'capture',
-          statusMessage:
-            e.amounts.reduce((a, b) => a + b, 0) > 0
-              ? `${meta.actor} captures`
-              : 'No capture',
+          statusMessage: `${meta.actor} captures`,
           statusDetail: allCap.map((p) => INDEX_TO_LABEL[p] ?? p).join(', '),
         });
         // Brief hold so both bowls pulse before seeds vanish
@@ -738,26 +795,35 @@ async function playEvents(
           const p = e.pits[i]!;
           pits[p] = 0;
         }
-        const total = e.amounts.reduce((a, b) => a + b, 0);
         const committed = useGameStore.getState().committed;
         if (committed) {
           score = { ...committed.score };
         }
+        const flightSide =
+          captureSide === 'S' || captureSide === 'N' ? captureSide : null;
+        const flight: CaptureFlight | null =
+          flightSide && pace.capture > 0
+            ? {
+                id: ++captureFlightSeq,
+                side: flightSide,
+                pits: e.pits
+                  .map((p, i) => ({ pit: p, amount: e.amounts[i] ?? 0 }))
+                  .filter((x) => x.amount > 0),
+              }
+            : null;
         useGameStore.setState({
           displayPits: pits.slice(),
           displayScore: score,
           highlightPit: allCap[0] ?? null,
           highlightPitsExtra: allCap.slice(1),
           highlightKind: 'capture',
-          lastCaptureSide: total > 0 ? captureSide : null,
-          statusMessage: total > 0 ? `${meta.actor} +${total}` : 'No capture',
-          statusDetail:
-            total > 0
-              ? e.pits.map((p) => INDEX_TO_LABEL[p] ?? p).join(', ')
-              : 'Turn ends.',
+          displayHand: null,
+          lastCaptureSide: captureSide,
+          captureFlight: flight,
+          statusMessage: `${meta.actor} +${total}`,
+          statusDetail: e.pits.map((p) => INDEX_TO_LABEL[p] ?? p).join(', '),
         });
-        void captureList;
-        if (total > 0) sfx.capture(e.pits, total);
+        sfx.capture(e.pits, total);
         if (pace.capture) await sleep(pace.capture);
         useGameStore.setState({ lastCaptureSide: null });
         break;

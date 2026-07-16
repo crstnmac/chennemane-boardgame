@@ -35,7 +35,13 @@ export { getLegalMoves, hasLegalMove, movesEqual, canSkipSecond } from './moves'
 export { applyMove, applyMoveSilent, executeSowing } from './apply';
 export { applyPass, applySkipSecond } from './pass';
 export { step, resign } from './step';
-export { isTerminal, getWinner } from './terminal';
+export {
+  isTerminal,
+  getWinner,
+  isDeadlocked,
+  QUIET_TURN_LIMIT,
+  QUIET_TURN_LIMIT_LOW_SEEDS,
+} from './terminal';
 export {
   endTurnSwitch,
   afterSowing,

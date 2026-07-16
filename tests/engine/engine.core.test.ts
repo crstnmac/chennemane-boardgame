@@ -28,6 +28,7 @@ function blank(partial: Partial<GameState> & { pits: number[] }): GameState {
     initialTotal:
       partial.initialTotal ?? board + (score.S ?? 0) + (score.N ?? 0) + (score.E ?? 0),
     config: partial.config ?? { ...DEFAULT_CONFIG },
+    quietTurns: partial.quietTurns ?? 0,
     openingComplete: partial.openingComplete ?? true,
     roundIndex: partial.roundIndex ?? 0,
     bank: partial.bank ?? { S: 0, N: 0, E: 0 },

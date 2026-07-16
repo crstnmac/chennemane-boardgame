@@ -76,7 +76,10 @@ export function afterSowing(
   let s: GameState = {
     ...state,
     openingComplete: true,
+    quietTurns: capturedTotal > 0 ? 0 : state.quietTurns,
   };
+  // Deadlock counter: a turn ending without any capture is "quiet"
+  const quietAfterEnd = capturedTotal > 0 ? 0 : state.quietTurns + 1;
 
   // Kalah-style extra turn (last seed in store): keep same player, sowings reset
   if (opts?.extraTurn) {
@@ -95,7 +98,10 @@ export function afterSowing(
         ...events,
         { type: 'turnEnd', player, reason: 'single-sowing-end' },
       ];
-      return appendMatchEndIfTerminal(endTurnSwitch(s), withEnd);
+      return appendMatchEndIfTerminal(
+        endTurnSwitch({ ...s, quietTurns: quietAfterEnd }),
+        withEnd,
+      );
     }
 
     // mode is forced | optional
@@ -111,7 +117,10 @@ export function afterSowing(
       ...events,
       { type: 'turnEnd', player, reason },
     ];
-    return appendMatchEndIfTerminal(endTurnSwitch(s), withEnd);
+    return appendMatchEndIfTerminal(
+      endTurnSwitch({ ...s, quietTurns: quietAfterEnd }),
+      withEnd,
+    );
   }
 
   // Second sowing always ends the turn
@@ -119,5 +128,8 @@ export function afterSowing(
     ...events,
     { type: 'turnEnd', player, reason: 'second-saada' },
   ];
-  return appendMatchEndIfTerminal(endTurnSwitch(s), withEnd);
+  return appendMatchEndIfTerminal(
+    endTurnSwitch({ ...s, quietTurns: quietAfterEnd }),
+    withEnd,
+  );
 }

@@ -16,6 +16,7 @@ function terminal(partial: Partial<GameState> & { score: GameState['score'] }): 
     resigned: partial.resigned ?? null,
     initialTotal: 70,
     config: { ...DEFAULT_CONFIG },
+    quietTurns: 0,
     openingComplete: true,
     roundIndex: 0,
     bank: { S: 0, N: 0, E: 0 },

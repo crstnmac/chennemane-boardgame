@@ -7,6 +7,7 @@ export function DirectionChooser() {
   const chooseDirection = useGameStore((s) => s.chooseDirection);
   const clearSelection = useGameStore((s) => s.clearSelection);
   const selectedPit = useGameStore((s) => s.selectedPit);
+  const displayHand = useGameStore((s) => s.displayHand);
   const dialogRef = useRef<HTMLDivElement>(null);
   const firstBtnRef = useRef<HTMLButtonElement>(null);
 
@@ -57,13 +58,19 @@ export function DirectionChooser() {
         aria-describedby="dir-dialog-desc"
       >
         <p className="dir-sheet-kicker">
-          Pit {selectedPit !== null ? selectedPit + 1 : ''}
+          {selectedPit !== null ? `From pit ${selectedPit + 1}` : 'Sowing'}
+          {displayHand !== null && displayHand > 0
+            ? ` · ${displayHand} remaining`
+            : ''}
         </p>
         <h3 id="dir-dialog-title" className="dir-sheet-title">
           Direction
         </h3>
         <p id="dir-dialog-desc" className="dir-sheet-sub">
-          One seed per pit along this path. Use ← / A or → / D, or Escape to cancel.
+          {displayHand !== null && displayHand > 0
+            ? `${displayHand} seed${displayHand === 1 ? '' : 's'} — one per pit. `
+            : ''}
+          Use ← / A or → / D, or Escape to cancel.
         </p>
         <div className="dir-sheet-actions">
           <button

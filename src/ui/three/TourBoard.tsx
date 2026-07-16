@@ -45,12 +45,57 @@ import {
 } from './sharedAssets';
 import { GroundContactShadow } from './GroundContactShadow';
 import { HomeVeranda } from './HomeVeranda';
-import { HERO_DPR } from './quality';
+import { FLYER_SCALE_BOOST, HERO_DPR, HOP_ARC_BOOST } from './quality';
 import { StudioLights } from './StudioLights';
 
 const MAX_SEEDS = 90;
 const CAM_POS: [number, number, number] = [0.95, 1.35, 1.2];
 const CAM_TARGET: [number, number, number] = [0, 0.03, 0.02];
+const TOUR_BASE_FOV = 34;
+
+/**
+ * Keep the demo board clear of the bottom info card. Portrait: widen the lens
+ * so the full board fits the narrow view, and bias the view up hard — the
+ * card covers roughly the bottom 45% of the screen. Mirrors the play board's
+ * ResponsiveFraming (aspect-gated so re-measures never restart framing).
+ */
+function TourFraming() {
+  const camera = useThree((s) => s.camera as THREE.PerspectiveCamera);
+  const size = useThree((s) => s.size);
+  const invalidate = useThree((s) => s.invalidate);
+  const lastAspect = useRef<number | null>(null);
+
+  useLayoutEffect(() => {
+    const aspect = size.width / Math.max(1, size.height);
+    if (lastAspect.current !== null && Math.abs(aspect - lastAspect.current) < 0.02) {
+      return;
+    }
+    lastAspect.current = aspect;
+
+    const need = THREE.MathUtils.clamp(1.28 / aspect, 1, 2.25);
+    const halfBase = Math.tan(THREE.MathUtils.degToRad(TOUR_BASE_FOV / 2));
+    camera.fov = Math.min(
+      2 * THREE.MathUtils.radToDeg(Math.atan(halfBase * need)),
+      66,
+    );
+    if (aspect < 1) {
+      camera.setViewOffset(
+        size.width,
+        size.height,
+        0,
+        size.height * 0.16,
+        size.width,
+        size.height,
+      );
+    } else {
+      camera.clearViewOffset();
+    }
+    camera.updateProjectionMatrix();
+    invalidate();
+  }, [camera, size, invalidate]);
+
+  return null;
+}
 
 export type TourHighlight =
   | { kind: 'none' }
@@ -93,6 +138,7 @@ function blankState(pits: number[], toMove: 'S' | 'N' = 'S'): GameState {
     resigned: null,
     initialTotal: board,
     config: { ...DEFAULT_CONFIG },
+    quietTurns: 0,
     openingComplete: true,
     roundIndex: 0,
     bank: { S: 0, N: 0, E: 0 },
@@ -169,7 +215,7 @@ function FlyingBead({
 
   const from = flight?.from ?? new THREE.Vector3();
   const to = flight?.to ?? new THREE.Vector3();
-  const lift = flight?.lift ?? 0.05;
+  const lift = (flight?.lift ?? 0.05) * HOP_ARC_BOOST;
 
   const spring = useSpring({
     from: { t: 0 },
@@ -202,7 +248,7 @@ function FlyingBead({
       frustumCulled={false}
       position={position as unknown as [number, number, number]}
       rotation-y={spring.t.to((t: number) => t * Math.PI * 1.4)}
-      scale={spring.t.to((t: number) => 1.05 + t * 0.12)}
+      scale={spring.t.to((t: number) => (1.05 + t * 0.12) * FLYER_SCALE_BOOST)}
     />
   );
 }
@@ -610,6 +656,7 @@ function TourScene({
   return (
     <>
       <RenderWake frames={30} />
+      <TourFraming />
       <color attach="background" args={['#1a120c']} />
       <fog attach="fog" args={['#1a120c', 4, 12]} />
       <StudioLights quality="hero" envIntensity={0.1} />

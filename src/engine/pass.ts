@@ -32,7 +32,7 @@ export function applyPass(
     { type: 'pass', player },
     { type: 'turnEnd', player, reason: 'pass' },
   ];
-  const next = endTurnSwitch(state);
+  const next = endTurnSwitch({ ...state, quietTurns: state.quietTurns + 1 });
   return appendMatchEndIfTerminal(next, events);
 }
 
@@ -48,5 +48,10 @@ export function applySkipSecond(
     { type: 'skipSecond', player },
     { type: 'turnEnd', player, reason: 'skip-second' },
   ];
-  return appendMatchEndIfTerminal(endTurnSwitch(state), events);
+  // First sowing captured (or skipping wouldn't be offered), so the turn
+  // made progress — reset rather than increment the deadlock counter.
+  return appendMatchEndIfTerminal(
+    endTurnSwitch({ ...state, quietTurns: 0 }),
+    events,
+  );
 }

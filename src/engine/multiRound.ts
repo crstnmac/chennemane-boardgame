@@ -1,5 +1,6 @@
 import { hasLegalMove } from './moves';
 import { ownedPits, playersInOrder } from './board';
+import { isDeadlocked } from './terminal';
 import type { GameState, MoveEvent, PlayerId } from './types';
 
 /**
@@ -15,7 +16,9 @@ export function tryAdvanceMultiRound(
   if (state.seriesOver) return null;
 
   const boardSeeds = state.pits.reduce((a, b) => a + b, 0);
-  if (boardSeeds > 1) return null;
+  // Board ends on residual ≤1 or on a capture-less deadlock (e.g. one bead
+  // per side dodging forever) — both reseed rather than end the series.
+  if (boardSeeds > 1 && !isDeadlocked(state)) return null;
   if (state.sowingsUsedThisTurn === 1) return null;
 
   const seedsPer = state.config.initialSeedsPerPit;
@@ -32,11 +35,11 @@ export function tryAdvanceMultiRound(
     E: state.score.E ?? 0,
   };
 
-  if (boardSeeds === 1) {
+  if (boardSeeds > 0) {
     if (state.config.residual === 'to-last-mover') {
-      bank[state.toMove] = (bank[state.toMove] ?? 0) + 1;
+      bank[state.toMove] = (bank[state.toMove] ?? 0) + boardSeeds;
     } else {
-      initialTotal -= 1;
+      initialTotal -= boardSeeds;
     }
   }
 
@@ -62,6 +65,7 @@ export function tryAdvanceMultiRound(
     score: { S: bank.S, N: bank.N, E: bank.E },
     bank: { S: bank.S, N: bank.N, E: bank.E },
     sowingsUsedThisTurn: 0,
+    quietTurns: 0,
     openingComplete: true,
     roundIndex: state.roundIndex + 1,
     initialTotal,

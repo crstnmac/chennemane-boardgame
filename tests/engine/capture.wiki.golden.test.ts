@@ -17,6 +17,7 @@ function wikiGoldenPre(): GameState {
     resigned: null,
     initialTotal: 8,
     config: { ...DEFAULT_CONFIG, directionMode: 'bidirectional' },
+    quietTurns: 0,
     openingComplete: true,
     roundIndex: 0,
     bank: { S: 0, N: 0, E: 0 },

@@ -73,6 +73,12 @@ export interface GameState {
   initialTotal: number;
   /** True after the match’s first completed sowing (opening direction lock). */
   openingComplete: boolean;
+  /**
+   * Consecutive turn-ends (including passes) with zero seeds captured.
+   * Feeds the deadlock rule: low-seed endgames (e.g. one bead per side)
+   * can otherwise cycle forever with both players dodging capture.
+   */
+  quietTurns: number;
   /** Multi-round series: 0-based round index */
   roundIndex: number;
   /** Seeds left in bank between multi-rounds (score is cumulative captured) */

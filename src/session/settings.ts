@@ -32,7 +32,9 @@ export const DEFAULT_SETTINGS: Settings = {
   multiRound: false,
   travelSpeed: TRAVEL_SPEED_DEFAULT,
   soundEnabled: true,
-  hintsDefault: true,
+  // Off by default — seven glowing legal rings on every turn is noisy.
+  // Players can enable via the in-game Hints chip or Settings.
+  hintsDefault: false,
   reducedMotionOverride: 'auto',
   theme: 'wood',
 };

@@ -29,23 +29,33 @@ export function pitPosition(index: number): [number, number, number] {
   return blenderToThree(p.x, p.y, p.z);
 }
 
+/** Max beads drawn in a single pit (labels still show the true count). */
+export const MAX_PIT_SEEDS_DRAWN = 24;
+
 /**
  * Local offsets inside a pit (Three: X right, Y up, Z depth).
  * Keep base height near the bowl floor — positive Y only stacks upper seeds.
+ * Packs up to {@link MAX_PIT_SEEDS_DRAWN}; late-game pits can hold more
+ * (fuzz saw ≥23) so the visual count must not silently cap at 12.
  */
 export function seedOffsets(count: number, radius: number): [number, number, number][] {
   const out: [number, number, number][] = [];
-  const n = Math.min(count, 16);
+  const n = Math.min(count, MAX_PIT_SEEDS_DRAWN);
   // Slightly inside bowl so seeds don't sit on the rim
-  const spread = radius * 0.42;
+  const spread = radius * 0.44;
+  const perLayer = 5;
   for (let i = 0; i < n; i++) {
     const t = i + 0.5;
     const a = t * 2.399963;
-    const r = Math.min(spread, spread * Math.sqrt(t / Math.max(n, 1)));
-    // Layer: first seeds on floor, later ones stack gently
-    const layer = Math.floor(i / 4);
-    const ly = 0.001 + layer * 0.007 + (i % 4) * 0.0008;
-    out.push([Math.cos(a) * r, ly, Math.sin(a) * r]);
+    const layer = Math.floor(i / perLayer);
+    const inLayer = i % perLayer;
+    const layerSpread = spread * (1 - layer * 0.06);
+    const r = Math.min(
+      layerSpread,
+      layerSpread * Math.sqrt((inLayer + 0.55) / perLayer),
+    );
+    const ly = 0.001 + layer * 0.0075 + (inLayer % 3) * 0.0009;
+    out.push([Math.cos(a) * r, ly, Math.sin(a) * r * 0.95]);
   }
   return out;
 }

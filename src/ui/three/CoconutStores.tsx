@@ -12,6 +12,7 @@ import {
   getStudioShellRoot,
 } from './sharedAssets';
 import {
+  MAX_SHELL_SEEDS_DRAWN,
   shellSeedOffsets,
   storeWorldPosition,
   storeYaw,
@@ -19,7 +20,7 @@ import {
   type StoreSide,
 } from './storeLayout';
 
-const MAX_SHELL_SEEDS = 56;
+const MAX_SHELL_SEEDS = MAX_SHELL_SEEDS_DRAWN;
 
 function ShellMesh({ side }: { side: StoreSide }) {
   const { scene } = useGLTF(COCONUT_SHELL_URL);
@@ -53,7 +54,7 @@ function ShellSeeds({ side, count }: { side: StoreSide; count: number }) {
   useLayoutEffect(() => {
     const mesh = meshRef.current;
     if (!mesh) return;
-    const nShow = Math.min(count, 28);
+    const nShow = Math.min(count, MAX_SHELL_SEEDS_DRAWN);
     const offsets = shellSeedOffsets(nShow, meta.seedPackRadius, meta.seedRestZ);
 
     const parent = new THREE.Object3D();

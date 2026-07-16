@@ -36,21 +36,25 @@ export function storeYaw(side: StoreSide): number {
 /**
  * Pack seeds inside a coconut bowl (local shell space: Y up, opening +Y-ish).
  */
+/** Max beads drawn in a coconut score shell (label still shows true score). */
+export const MAX_SHELL_SEEDS_DRAWN = 48;
+
 export function shellSeedOffsets(
   count: number,
   packRadius: number,
   restY: number,
 ): [number, number, number][] {
   const out: [number, number, number][] = [];
-  const n = Math.min(count, 28);
-  const rMax = packRadius * 0.88;
+  const n = Math.min(count, MAX_SHELL_SEEDS_DRAWN);
+  const rMax = packRadius * 0.9;
+  const perLayer = 8;
   for (let i = 0; i < n; i++) {
     const t = i + 0.5;
     const a = t * 2.399963;
-    const layer = Math.floor(i / 7);
-    const inLayer = i % 7;
-    const ring = Math.min(rMax, rMax * Math.sqrt((inLayer + 0.6) / 7));
-    const ly = restY + layer * 0.0085 + (inLayer % 3) * 0.0012;
+    const layer = Math.floor(i / perLayer);
+    const inLayer = i % perLayer;
+    const ring = Math.min(rMax, rMax * Math.sqrt((inLayer + 0.55) / perLayer));
+    const ly = restY + layer * 0.0078 + (inLayer % 3) * 0.001;
     out.push([Math.cos(a) * ring, ly, Math.sin(a) * ring * 0.92]);
   }
   return out;

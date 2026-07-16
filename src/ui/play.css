@@ -1411,8 +1411,28 @@
 }
 
 @media (max-width: 520px) {
+  /* Keep the card compact — the demo board above it must stay visible */
   .tour-card {
-    padding: 1rem 1rem 1.05rem;
+    padding: 0.8rem 0.9rem 0.85rem;
+  }
+
+  .tour-kicker {
+    display: none;
+  }
+
+  .tour-title {
+    margin-bottom: 0.3rem;
+    font-size: 1.15rem;
+  }
+
+  .tour-body {
+    margin-bottom: 0.65rem;
+    font-size: 0.86rem;
+    line-height: 1.4;
+  }
+
+  .tour-speed-wrap {
+    display: none;
   }
 
   .tour-actions {
@@ -1421,6 +1441,7 @@
 
   .tour-actions .btn {
     flex: 1 1 auto;
+    min-height: 2.6rem;
   }
 }
 
@@ -1883,6 +1904,56 @@
   line-height: 1;
 }
 
+/* Remaining seeds in hand — simple HUD count while sowing */
+.hand-tray {
+  position: absolute;
+  left: 50%;
+  top: max(4.2rem, calc(env(safe-area-inset-top) + 3.5rem));
+  transform: translateX(-50%);
+  z-index: 20;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
+  padding: 0.4rem 0.9rem 0.45rem;
+  border-radius: 4px;
+  background: rgba(14, 10, 8, 0.88);
+  border: 1px solid rgba(200, 168, 100, 0.35);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(10px);
+  min-width: 5.5rem;
+}
+
+.hand-tray-kicker {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(240, 200, 140, 0.85);
+}
+
+.hand-tray-count {
+  font-family: var(--font-display, Georgia, serif);
+  font-size: 2rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #f3ebe0;
+  line-height: 1;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.7);
+}
+
+@media (max-width: 640px) {
+  .hand-tray {
+    top: max(3.6rem, calc(env(safe-area-inset-top) + 3rem));
+    padding: 0.35rem 0.75rem 0.4rem;
+  }
+
+  .hand-tray-count {
+    font-size: 1.7rem;
+  }
+}
+
 /* ── Focusable pit targets on the 3D board (drei Html) ── */
 .board-pit-html {
   /* Wrapper from drei — keep non-blocking except the button */
@@ -1908,8 +1979,8 @@
 }
 
 .board-pit-focus.is-legal {
-  /* Always discoverable for keyboard: thin ring when legal */
-  opacity: 0.35;
+  /* Quiet legal cue — only when Hints is on (class is gated in JSX) */
+  opacity: 0.22;
 }
 
 .board-pit-focus.is-legal:hover,
@@ -1925,16 +1996,14 @@
   position: absolute;
   inset: 0;
   border-radius: 50%;
-  border: 2px solid transparent;
+  border: 1.5px solid transparent;
   box-shadow: none;
   pointer-events: none;
 }
 
 .board-pit-focus.is-legal .board-pit-focus-ring {
-  border-color: rgba(224, 201, 137, 0.55);
-  box-shadow:
-    0 0 0 1px rgba(0, 0, 0, 0.35),
-    inset 0 0 0 1px rgba(255, 240, 200, 0.12);
+  border-color: rgba(200, 170, 100, 0.35);
+  box-shadow: none;
 }
 
 .board-pit-focus:focus {

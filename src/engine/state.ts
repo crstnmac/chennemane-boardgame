@@ -56,6 +56,7 @@ export function createGame(
     config,
     resigned: null,
     initialTotal,
+    quietTurns: 0,
     openingComplete: false,
     roundIndex: 0,
     bank: emptyScore(),
