@@ -168,3 +168,11 @@ export function nextPlayer(current: PlayerId, config: VariantConfig): PlayerId {
   if (idx < 0) return order[0]!;
   return order[(idx + 1) % order.length]!;
 }
+
+/** Player who moved immediately before `current` (inverse of nextPlayer). */
+export function previousPlayer(current: PlayerId, config: VariantConfig): PlayerId {
+  const order = playersInOrder(config);
+  const idx = order.indexOf(current);
+  if (idx < 0) return order[0]!;
+  return order[(idx - 1 + order.length) % order.length]!;
+}

@@ -9,7 +9,7 @@ import {
 } from '../engine';
 import { evaluate, evaluateMaterialOnly } from './evaluate';
 
-export type Difficulty = 'easy' | 'medium';
+export type Difficulty = 'easy' | 'medium' | 'hard';
 
 export interface SearchOptions {
   difficulty: Difficulty;
@@ -22,13 +22,21 @@ const BUDGETS: Record<
   { depth: number; timeMs: number; materialOnly: boolean; epsilon: number }
 > = {
   // Search can finish quickly; UI enforces a minimum "thinking" display time.
-  easy: { depth: 2, timeMs: 180, materialOnly: true, epsilon: 0.18 },
-  medium: { depth: 4, timeMs: 900, materialOnly: false, epsilon: 0 },
+  easy: { depth: 2, timeMs: 200, materialOnly: true, epsilon: 0.15 },
+  // Deeper medium for capture chains + second-sowing lines.
+  medium: { depth: 5, timeMs: 1200, materialOnly: false, epsilon: 0 },
+  // Hard: full eval, deeper ID, longer budget for endgame quiet-turn races.
+  hard: { depth: 7, timeMs: 2800, materialOnly: false, epsilon: 0 },
 };
 
 function orderMoves(state: GameState, moves: Move[]): Move[] {
-  // Prefer moves that start from pits with more seeds (heuristic ordering)
-  return [...moves].sort((a, b) => state.pits[b.startPit]! - state.pits[a.startPit]!);
+  // Prefer higher start pits; slight boost for pits that often lead to relays.
+  return [...moves].sort((a, b) => {
+    const sa = state.pits[a.startPit] ?? 0;
+    const sb = state.pits[b.startPit] ?? 0;
+    if (sb !== sa) return sb - sa;
+    return a.startPit - b.startPit;
+  });
 }
 
 export function search(state: GameState, opts: SearchOptions): Move {
@@ -102,15 +110,21 @@ export function search(state: GameState, opts: SearchOptions): Move {
     }
   }
 
-  // Iterative deepening for medium
+  // Iterative deepening. Only commit a depth when every root move was scored;
+  // a time/cancel cut mid-root must keep the previous complete depth's choice
+  // (partial roots are not comparable and can demote a known-good move).
   const maxDepth = budget.depth;
   for (let d = 1; d <= maxDepth; d++) {
     if (opts.cancelled?.() || performance.now() > deadline) break;
     let depthBest = bestMove;
     let depthScore = -Infinity;
+    let rootComplete = true;
     const ordered = orderMoves(state, moves);
     for (const m of ordered) {
-      if (opts.cancelled?.() || performance.now() > deadline) break;
+      if (opts.cancelled?.() || performance.now() > deadline) {
+        rootComplete = false;
+        break;
+      }
       const child = applyMoveSilent(state, m);
       const score = minimax(
         child,
@@ -124,6 +138,7 @@ export function search(state: GameState, opts: SearchOptions): Move {
         depthBest = m;
       }
     }
+    if (!rootComplete) break;
     bestMove = depthBest;
     bestScore = depthScore;
   }

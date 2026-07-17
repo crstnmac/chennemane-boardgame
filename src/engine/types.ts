@@ -112,6 +112,19 @@ export type TurnEndReason =
   | 'round-end'
   | 'extra-turn-used';
 
+/**
+ * Why the match (or series) ended — first-class for result UI and coaching.
+ * Distinct from {@link TurnEndReason}, which is per-turn bookkeeping.
+ */
+export type MatchEndReason =
+  | 'resign'
+  | 'empty-board'
+  | 'residual'
+  | 'deadlock'
+  | 'empty-side'
+  | 'series-end'
+  | 'score';
+
 export type MoveEvent =
   | { type: 'pickup'; pit: PitIndex; count: number }
   | { type: 'drop'; pit: PitIndex; remainingInHand: number }
@@ -122,4 +135,9 @@ export type MoveEvent =
   | { type: 'skipSecond'; player: PlayerId }
   | { type: 'turnEnd'; player: PlayerId; reason: TurnEndReason }
   | { type: 'roundEnd'; roundIndex: number }
-  | { type: 'matchEnd'; winner: PlayerId | 'draw'; scores: Record<PlayerId, number> };
+  | {
+      type: 'matchEnd';
+      winner: PlayerId | 'draw';
+      scores: Record<PlayerId, number>;
+      reason: MatchEndReason;
+    };

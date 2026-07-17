@@ -7,6 +7,8 @@ interface ResultOverlayProps {
   outcome: Exclude<MatchOutcome, { kind: 'ongoing' }>;
   onPlayAgain: () => void;
   onHome: () => void;
+  onCopyReport?: () => void;
+  reportCopied?: boolean;
 }
 
 type Variant = 'win' | 'lose' | 'draw';
@@ -97,7 +99,13 @@ function makeConfetti(count: number): ConfettiPiece[] {
   }));
 }
 
-export function ResultOverlay({ outcome, onPlayAgain, onHome }: ResultOverlayProps) {
+export function ResultOverlay({
+  outcome,
+  onPlayAgain,
+  onHome,
+  onCopyReport,
+  reportCopied,
+}: ResultOverlayProps) {
   const variant = variantOf(outcome);
   const stars = variantOf(outcome) === 'win' ? starsOf(outcome) : 0;
   const reduced = prefersReducedMotion();
@@ -227,6 +235,10 @@ export function ResultOverlay({ outcome, onPlayAgain, onHome }: ResultOverlayPro
           </div>
         </div>
 
+        <p className="result-end-reason" role="status">
+          {outcome.endReasonCopy}
+        </p>
+
         <div className={`result-actions ${shown.actions ? 'ro-in' : 'ro-pending'}`}>
           <button
             ref={playAgainRef}
@@ -245,6 +257,16 @@ export function ResultOverlay({ outcome, onPlayAgain, onHome }: ResultOverlayPro
           >
             Home
           </button>
+          {onCopyReport && (
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={onCopyReport}
+              tabIndex={shown.actions ? 0 : -1}
+            >
+              {reportCopied ? 'Copied report' : 'Copy match report'}
+            </button>
+          )}
         </div>
       </div>
     </div>

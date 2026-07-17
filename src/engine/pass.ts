@@ -28,6 +28,9 @@ export function applyPass(
     return appendMatchEndIfTerminal(ended, events);
   }
 
+  // pass and opponent-continues both hand the turn to the next player.
+  // opponent-continues is the same rule family (auto-pass in session); keep
+  // a pass event so UI/coaching can announce the empty row.
   const events: MoveEvent[] = [
     { type: 'pass', player },
     { type: 'turnEnd', player, reason: 'pass' },

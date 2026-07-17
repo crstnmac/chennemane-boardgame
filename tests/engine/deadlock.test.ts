@@ -105,6 +105,29 @@ describe('deadlock rule (no-capture cycles terminate)', () => {
     expect(state.quietTurns).toBe(1);
   });
 
+  it('second sowing after a capture still clears quietTurns (turn made progress)', () => {
+    // First sowing captures and forces a second; second ends without capture.
+    // The whole *turn* captured, so the deadlock counter must stay 0.
+    const layout = [1, 0, 0, 2, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0];
+    // total board 6 — same fixture as capture_gt0_with_residual_on_own_row
+    let s = createGame(
+      { seedFill: 'custom', customLayout: layout },
+      { firstPlayer: 'S' },
+    );
+    s = { ...s, quietTurns: QUIET_TURN_LIMIT_LOW_SEEDS - 2 };
+    const first = applyMove(s, { startPit: 0, direction: 'ccw' });
+    expect(first.state.sowingsUsedThisTurn).toBe(1);
+    expect(first.state.quietTurns).toBe(0);
+
+    const legal = getLegalMoves(first.state);
+    expect(legal.length).toBeGreaterThan(0);
+    const second = applyMove(first.state, legal[0]!);
+    expect(second.state.sowingsUsedThisTurn).toBe(0);
+    // Must not treat the second-saada as a quiet turn just because it
+    // captured 0 — the first sowing already claimed seeds this turn.
+    expect(second.state.quietTurns).toBe(0);
+  });
+
   it('multi-round: deadlock ends the board and reseeds from scores', () => {
     let s = twoBeadGame(0, 7, 'S', {
       matchStructure: 'multi-round-protected',

@@ -3,7 +3,21 @@ import { Canvas, useFrame } from '@react-three/fiber';
 import { ContactShadows, Float, OrbitControls, useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { getLegalMoves, type PitIndex } from '../../engine';
+import {
+  dropMsForSpeed,
+  prefersReducedMotion,
+} from '../../session/animationPace';
 import { useGameStore, type TurnPhase } from '../../session/store';
+import {
+  HOP_REST_Y,
+  hopDurationMs,
+  hopPoint,
+  hopSettleMs,
+  randomHopLift,
+  randomHopSkew,
+  resolveHopBudgetMs,
+  type Vec3,
+} from '../hopMath';
 import { createWoodMaterial } from '../shaders/woodMaterial';
 import { createPitMaterial } from '../shaders/pitMaterial';
 import { createSeedMaterial } from '../shaders/seedMaterial';
@@ -11,6 +25,7 @@ import { createTableMaterial } from '../shaders/tableMaterial';
 import { BOARD_META, PITS, pitPosition, seedOffsets } from './layout';
 import { gameTextures } from './loadTextures';
 import { BOARD_URL, SEED_URL } from './assetUrls';
+import { FLYER_SCALE_BOOST, HOP_ARC_BOOST } from './quality';
 
 function isAiPhase(p: TurnPhase) {
   return p === 'ai-thinking' || p === 'ai-preview' || p === 'ai-playing';
@@ -177,40 +192,99 @@ function SeedsLayer({
   );
 }
 
+/**
+ * Legacy shader board flyer — same hop contract as BlenderBoard / hopMath
+ * (drop-only arcs, hopDurationMs, mid-hop continuity).
+ */
 function FlyingSeed({ material }: { material: THREE.ShaderMaterial }) {
   const highlightPit = useGameStore((s) => s.highlightPit);
+  const highlightKind = useGameStore((s) => s.highlightKind);
   const turnPhase = useGameStore((s) => s.turnPhase);
+  const animBudgetMs = useGameStore((s) => s.animBudgetMs);
+  const travelSpeed = useGameStore((s) => s.settings.travelSpeed);
+  const reducedMotion = useGameStore((s) => prefersReducedMotion(s.settings));
   const mesh = useRef<THREE.Mesh>(null);
-  const target = useRef(new THREE.Vector3());
-  const cur = useRef(new THREE.Vector3());
-  const armed = useRef(false);
 
-  useFrame((_, dt) => {
+  const hop = useRef({
+    from: [0, HOP_REST_Y, 0] as Vec3,
+    to: [0, HOP_REST_Y, 0] as Vec3,
+    lift: 0,
+    skew: 1,
+    start: 0,
+    dur: 280,
+    live: false,
+  });
+  const progressRef = useRef(1);
+
+  const activePhase =
+    turnPhase === 'animating' ||
+    turnPhase === 'ai-playing' ||
+    turnPhase === 'ai-preview';
+
+  useEffect(() => {
+    const h = hop.current;
+    if (highlightPit === null || !activePhase) {
+      h.live = false;
+      progressRef.current = 1;
+      return;
+    }
+
+    const [x, y, z] = pitPosition(highlightPit);
+    const r = PITS[highlightPit]?.radius ?? BOARD_META.pitRadius;
+    const ja = Math.random() * Math.PI * 2;
+    const jr = Math.sqrt(Math.random()) * r * 0.35;
+    const dest: Vec3 = [x + Math.cos(ja) * jr, y + HOP_REST_Y, z + Math.sin(ja) * jr];
+
+    const dropMs = resolveHopBudgetMs(
+      animBudgetMs,
+      highlightKind,
+      travelSpeed,
+      reducedMotion,
+      dropMsForSpeed,
+    );
+    const isHop = highlightKind === 'drop' && !reducedMotion && dropMs > 0;
+    const from = isHop
+      ? hopPoint(h.from, h.to, progressRef.current, h.lift, h.skew)
+      : dest;
+
+    const dur =
+      dropMs === 0
+        ? 1
+        : isHop
+          ? hopDurationMs(dropMs)
+          : hopSettleMs(dropMs) || 1;
+
+    h.from = from;
+    h.to = dest;
+    h.lift = isHop && dropMs > 0 ? randomHopLift(HOP_ARC_BOOST) : 0;
+    h.skew = randomHopSkew();
+    h.start = performance.now();
+    h.dur = dur;
+    h.live = true;
+    progressRef.current = 0;
+  }, [highlightPit, highlightKind, activePhase, animBudgetMs, reducedMotion]);
+
+  useFrame(() => {
     if (!mesh.current) return;
-    const active =
-      highlightPit !== null &&
-      (turnPhase === 'animating' ||
-        turnPhase === 'ai-playing' ||
-        turnPhase === 'ai-preview');
-    if (active && highlightPit !== null) {
-      const [x, y, z] = pitPosition(highlightPit);
-      target.current.set(x, y + 0.028, z);
-      if (!armed.current) {
-        cur.current.copy(target.current);
-        armed.current = true;
-      }
-      cur.current.lerp(target.current, 1 - Math.exp(-16 * dt));
-      const dist = cur.current.distanceTo(target.current);
-      mesh.current.position.copy(cur.current);
-      mesh.current.position.y += Math.min(dist * 0.9, 0.045);
-      mesh.current.visible = true;
-      mesh.current.scale.setScalar(0.015);
-      material.uniforms.uPulse!.value = 1;
-    } else {
-      armed.current = false;
+    const h = hop.current;
+    if (!h.live) {
       mesh.current.visible = false;
       material.uniforms.uPulse!.value = 0;
+      return;
     }
+
+    const elapsed = performance.now() - h.start;
+    const t = Math.min(1, Math.max(0, h.dur > 0 ? elapsed / h.dur : 1));
+    progressRef.current = t;
+    const p = hopPoint(h.from, h.to, t, h.lift, h.skew);
+    mesh.current.position.set(p[0], p[1], p[2]);
+    const scaleIn = Math.min(1, t * 8 + (h.lift === 0 ? 1 : 0));
+    // Unit sphere seed geo — keep base ~0.015 like resting SeedsLayer beads
+    mesh.current.scale.setScalar(
+      Math.max(0.008, scaleIn * 0.015 * (1 + (FLYER_SCALE_BOOST - 1) * 0.5)),
+    );
+    mesh.current.visible = true;
+    material.uniforms.uPulse!.value = 1;
   });
 
   return (

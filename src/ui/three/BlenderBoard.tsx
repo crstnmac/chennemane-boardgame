@@ -13,8 +13,11 @@ import { Html, OrbitControls, useGLTF } from '@react-three/drei';
 import { animated, useSpring } from '@react-spring/three';
 import * as THREE from 'three';
 import { getLegalMoves, INDEX_TO_LABEL, type PitIndex } from '../../engine';
-import { dropMsForSpeed } from '../../session/animationPace';
-import type { Settings } from '../../session/settings';
+import {
+  dropMsForSpeed,
+  eventPaceFromDrop,
+  prefersReducedMotion,
+} from '../../session/animationPace';
 import { useGameStore, type TurnPhase } from '../../session/store';
 import { AnimatedPitCount, RowInitialMarker } from './AnimatedPitCount';
 import { BOARD_URL, SEED_URL } from './assetUrls';
@@ -46,6 +49,18 @@ import {
   IS_LOW_POWER,
 } from './quality';
 import { StudioLights, preloadPlayEnvironment } from './StudioLights';
+import {
+  HOP_ARC_SEGMENTS,
+  HOP_REST_Y,
+  captureFlightDurationMs,
+  hopDurationMs,
+  hopPoint,
+  hopSettleMs,
+  randomHopLift,
+  randomHopSkew,
+  resolveHopBudgetMs,
+  type Vec3,
+} from '../hopMath';
 
 /** Instanced board beads — total board never exceeds initialTotal (≤84 for 6/pit). */
 const MAX_SEEDS = 96;
@@ -184,47 +199,6 @@ const SeedInstances = memo(function SeedInstances({
   );
 });
 
-/**
- * Peak hop height (Three Y). Elevated play camera foreshortens vertical motion,
- * so the arc must clear ~a pit diameter or it reads as a teleport.
- */
-const HOP_LIFT = 0.165 * HOP_ARC_BOOST;
-/** Bead sits this far above the pit floor when resting/landing. */
-const HOP_REST_Y = 0.028;
-/** Segments for the transient hop-arch ribbon. */
-const HOP_ARC_SEGMENTS = 20;
-
-function prefersReducedMotion(settings: Settings): boolean {
-  return (
-    settings.reducedMotionOverride === 'always' ||
-    (settings.reducedMotionOverride === 'auto' &&
-      typeof window !== 'undefined' &&
-      window.matchMedia('(prefers-reduced-motion: reduce)').matches)
-  );
-}
-
-type Vec3 = [number, number, number];
-
-/** Ken Perlin smootherstep — eased 0→1 with zero velocity at both ends. */
-function smoother(t: number): number {
-  return t * t * t * (t * (t * 6 - 15) + 10);
-}
-
-/**
- * Point along a hop at progress t. Horizontal eases in/out (a carried hand),
- * vertical is a sine arc (the toss). `skew` shifts the apex so the rise and
- * fall aren't perfectly symmetric — reads more like a real throw.
- */
-function hopPoint(from: Vec3, to: Vec3, t: number, lift: number, skew: number): Vec3 {
-  const e = smoother(t);
-  const arc = Math.sin(Math.PI * Math.pow(t, skew)) * lift;
-  return [
-    from[0] + (to[0] - from[0]) * e,
-    from[1] + (to[1] - from[1]) * t + arc,
-    from[2] + (to[2] - from[2]) * e,
-  ];
-}
-
 type HopState = {
   from: Vec3;
   to: Vec3;
@@ -254,6 +228,7 @@ function FlyingSeed() {
   const highlightPit = useGameStore((s) => s.highlightPit);
   const highlightKind = useGameStore((s) => s.highlightKind);
   const turnPhase = useGameStore((s) => s.turnPhase);
+  const animBudgetMs = useGameStore((s) => s.animBudgetMs);
   const travelSpeed = useGameStore((s) => s.settings.travelSpeed);
   const reducedMotion = useGameStore((s) => prefersReducedMotion(s.settings));
 
@@ -321,27 +296,34 @@ function FlyingSeed() {
     const jr = Math.sqrt(Math.random()) * r * 0.35;
     const dest: Vec3 = [x + Math.cos(ja) * jr, y + HOP_REST_Y, z + Math.sin(ja) * jr];
 
+    // Prefer store-committed animBudgetMs; never invent a sow hop from the HUD.
+    const dropMs = resolveHopBudgetMs(
+      animBudgetMs,
+      highlightKind,
+      travelSpeed,
+      reducedMotion,
+      dropMsForSpeed,
+    );
     // Only drops are real tosses between pits; pickup/relay/capture sit in place.
-    const isHop = highlightKind === 'drop' && !reducedMotion;
+    const isHop = highlightKind === 'drop' && !reducedMotion && dropMs > 0;
     const curT = progressRef.current;
     const from = isHop
       ? hopPoint(h.from, h.to, curT, h.lift, h.skew)
       : dest;
 
-    const dropMs = dropMsForSpeed(travelSpeed, reducedMotion);
-    // Slightly shorter than the store sleep so the bead settles before the next event.
-    // Reduced-motion / speed-0: snap in place (no flight).
+    // Shared hop duration — slightly shorter than store sleep so the bead
+    // lands before pit counts increment. Reduced-motion / batch: snap.
     const dur =
       dropMs === 0
         ? 1
         : isHop
-          ? Math.max(90, Math.round(dropMs * 0.9))
-          : Math.max(60, Math.round(dropMs * 0.35));
+          ? hopDurationMs(dropMs)
+          : hopSettleMs(dropMs) || 1;
 
     h.from = from;
     h.to = dest;
-    h.lift = isHop && dropMs > 0 ? HOP_LIFT * (0.88 + Math.random() * 0.35) : 0;
-    h.skew = 0.88 + Math.random() * 0.3;
+    h.lift = isHop && dropMs > 0 ? randomHopLift(HOP_ARC_BOOST) : 0;
+    h.skew = randomHopSkew();
     h.spin0 = h.spin1;
     h.spin1 = h.spin0 + (Math.random() * 0.9 + 0.55) * Math.PI;
     h.start = performance.now();
@@ -350,11 +332,12 @@ function FlyingSeed() {
     h.appear = 1;
     progressRef.current = 0;
     invalidate();
+    // travelSpeed only as fallback — animBudgetMs is the hop contract source.
   }, [
     highlightPit,
     highlightKind,
     activePhase,
-    travelSpeed,
+    animBudgetMs,
     reducedMotion,
     invalidate,
   ]);
@@ -467,6 +450,20 @@ function CaptureFlightSeeds() {
       if (!ev || ev.id === lastIdRef.current) return;
       lastIdRef.current = ev.id;
 
+      // Use the store-committed budget (not a fresh HUD sample) so flight
+      // cannot outlive the capture sleep already in progress.
+      const captureMs =
+        ev.budgetMs > 0
+          ? ev.budgetMs
+          : eventPaceFromDrop(
+              dropMsForSpeed(
+                state.settings.travelSpeed,
+                prefersReducedMotion(state.settings),
+              ),
+            ).capture;
+      const flightDur = captureFlightDurationMs(captureMs) || 1;
+      const maxDelay = Math.max(0, captureMs - flightDur);
+
       const dest = storeCaptureWorldPos(ev.side);
       const packR = (STORES[ev.side]?.seedPackRadius ?? 0.04) * 0.55;
       const legs: CaptureLeg[] = [];
@@ -484,11 +481,12 @@ function CaptureFlightSeeds() {
           legs.push({
             from: [px + o[0], py + o[1] + HOP_REST_Y * 0.4, pz + o[2]],
             to: [dest.x + Math.cos(la) * lr, dest.y, dest.z + Math.sin(la) * lr],
-            // Beads leave each bowl in quick succession, bowls one after another
+            // Provisional stagger; compressed below to fit store sleep.
             delay: pitOrder * 110 + beadIdx * 48 + Math.random() * 30,
-            dur: 600 + Math.random() * 160,
-            lift: (0.16 + Math.random() * 0.08) * HOP_ARC_BOOST,
-            skew: 0.95 + Math.random() * 0.3,
+            // No random overshoot — duration is hard ≤ captureMs.
+            dur: flightDur,
+            lift: randomHopLift(HOP_ARC_BOOST) * 1.05,
+            skew: randomHopSkew(),
             spin0: Math.random() * Math.PI * 2,
             spin1: (Math.random() * 1.4 + 0.8) * Math.PI,
           });
@@ -497,6 +495,14 @@ function CaptureFlightSeeds() {
         pitOrder++;
       }
       if (legs.length === 0) return;
+      // Preserve relative cascade, but last bead must land before store advances.
+      if (legs.length > 0) {
+        const peak = Math.max(...legs.map((l) => l.delay));
+        if (peak > maxDelay) {
+          const scale = maxDelay > 0 ? maxDelay / peak : 0;
+          for (const leg of legs) leg.delay *= scale;
+        }
+      }
       legsRef.current = legs;
       startRef.current = performance.now();
       invalidate();
@@ -574,6 +580,8 @@ const PitHitTarget = memo(function PitHitTarget({
   highlight,
   highlightKind,
   aiPreview,
+  preview,
+  previewKind,
   canClick,
   showCount,
   blocked,
@@ -589,6 +597,9 @@ const PitHitTarget = memo(function PitHitTarget({
   highlight: boolean;
   highlightKind: HighlightKind;
   aiPreview: boolean;
+  /** Direction-chooser consequence preview (saada empty / capture bowls). */
+  preview?: boolean;
+  previewKind?: 'none' | 'path' | 'saada' | 'capture';
   canClick: boolean;
   showCount: boolean;
   /** Multi-round: pit is protected (closed) this round. */
@@ -600,21 +611,30 @@ const PitHitTarget = memo(function PitHitTarget({
   const isCollect = highlight && COLLECT_KINDS.has(highlightKind);
   const isSaada = highlight && highlightKind === 'saada';
   const isDrop = highlight && highlightKind === 'drop';
+  const isPreviewCapture = Boolean(preview && previewKind === 'capture');
+  const isPreviewSaada = Boolean(preview && previewKind === 'saada');
+  const isPreview = Boolean(preview);
   const { invalidate } = useThree();
 
-  const ringColor = aiPreview
-    ? '#9a8fb0'
-    : isCollect
-      ? '#e8c070'
-      : isSaada
-        ? '#b898d0'
-        : selected
-          ? '#e0c989'
-          : highlight
-            ? '#d4b878'
-            : showHint
-              ? '#a89060'
-              : '#000';
+  const ringColor = isPreviewCapture
+    ? '#dc785a'
+    : isPreviewSaada
+      ? '#c8a0dc'
+      : isPreview
+        ? '#d4a0c8'
+        : aiPreview
+          ? '#9a8fb0'
+          : isCollect
+            ? '#e8c070'
+            : isSaada
+              ? '#b898d0'
+              : selected
+                ? '#e0c989'
+                : highlight
+                  ? '#d4b878'
+                  : showHint
+                    ? '#a89060'
+                    : '#000';
 
   // Clicks always respect legality; hints only affect idle ring visibility
   const interactive = canClick && legal;
@@ -630,25 +650,39 @@ const PitHitTarget = memo(function PitHitTarget({
   });
 
   const ringSpring = useSpring({
-    // Selected / AI preview stay clear; sowing flashes stay subtle; idle
-    // legal rings (Hints) are a thin whisper so the board stays calm.
-    ringOpacity: selected
-      ? 0.38
-      : aiPreview
-        ? 0.3
+    // Selected / AI / direction preview stay clear; sowing flashes stay subtle;
+    // idle legal rings (Hints) are a thin whisper so the board stays calm.
+    ringOpacity: isPreviewCapture
+      ? 0.42
+      : isPreviewSaada
+        ? 0.36
+        : isPreview
+          ? 0.32
+          : selected
+            ? 0.38
+            : aiPreview
+              ? 0.3
+              : isCollect
+                ? 0.28
+                : isSaada
+                  ? 0.22
+                  : isDrop
+                    ? 0.14
+                    : highlight
+                      ? 0.16
+                      : showHint
+                        ? 0.12
+                        : 0,
+    fillOpacity: isPreviewCapture
+      ? 0.08
+      : isPreviewSaada
+        ? 0.05
         : isCollect
-          ? 0.28
+          ? 0.06
           : isSaada
-            ? 0.22
-            : isDrop
-              ? 0.14
-              : highlight
-                ? 0.16
-                : showHint
-                  ? 0.12
-                  : 0,
-    fillOpacity: isCollect ? 0.06 : isSaada ? 0.04 : 0,
-    fillScale: isCollect ? 1.02 : 1,
+            ? 0.04
+            : 0,
+    fillScale: isCollect || isPreviewCapture ? 1.02 : 1,
     config: { tension: 240, friction: 28 },
     onChange: () => invalidate(),
   });
@@ -670,11 +704,12 @@ const PitHitTarget = memo(function PitHitTarget({
   }, [isCollect, highlightKind, index, burstApi, invalidate]);
 
   // Drop events no longer draw rings — the flying bead is enough feedback.
-  // Rings only for: select, hints, collect/saada/AI (not every sow hop).
+  // Rings only for: select, hints, collect/saada/AI, direction preview.
   const showRings =
     selected ||
     showHint ||
     aiPreview ||
+    isPreview ||
     isCollect ||
     isSaada ||
     (highlight && highlightKind !== 'drop' && highlightKind !== 'none');
@@ -932,6 +967,8 @@ function PitLayer() {
   const selectPit = useGameStore((s) => s.selectPit);
   const pendingDirection = useGameStore((s) => s.pendingDirection);
   const hintsEnabled = useGameStore((s) => s.hintsEnabled);
+  const previewPits = useGameStore((s) => s.previewPits);
+  const previewKind = useGameStore((s) => s.previewKind);
 
   const canInput = useMemo(() => {
     if (!committed) return false;
@@ -968,6 +1005,8 @@ function PitLayer() {
     return s;
   }, [highlightPit, highlightPitsExtra]);
 
+  const previewSet = useMemo(() => new Set(previewPits), [previewPits]);
+
   // Stable tab order: North (A) left→right, then South (B) left→right
   const focusOrder = useMemo(
     () => [7, 8, 9, 10, 11, 12, 13, 0, 1, 2, 3, 4, 5, 6] as PitIndex[],
@@ -996,6 +1035,8 @@ function PitLayer() {
             highlight={isLit && turnPhase !== 'ai-preview'}
             highlightKind={turnPhase === 'ai-preview' && isLit ? 'ai' : kind}
             aiPreview={turnPhase === 'ai-preview' && isLit}
+            preview={previewSet.has(idx)}
+            previewKind={previewKind}
             canClick={canInput}
             showCount={!isBlocked}
             blocked={isBlocked}
@@ -1048,11 +1089,14 @@ function StoreInvalidator() {
       if (
         state.displayPits !== prev.displayPits ||
         state.displayScore !== prev.displayScore ||
+        state.displayProtected !== prev.displayProtected ||
         state.highlightPit !== prev.highlightPit ||
         state.highlightKind !== prev.highlightKind ||
         state.lastCaptureSide !== prev.lastCaptureSide ||
+        state.captureFlight !== prev.captureFlight ||
         state.turnPhase !== prev.turnPhase ||
         state.selectedPit !== prev.selectedPit ||
+        state.pendingDirection !== prev.pendingDirection ||
         state.inputLocked !== prev.inputLocked ||
         state.hintsEnabled !== prev.hintsEnabled
       ) {

@@ -7,7 +7,7 @@ import {
   useState,
 } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { useGLTF } from '@react-three/drei';
+import { OrbitControls, useGLTF } from '@react-three/drei';
 import { animated, useSpring } from '@react-spring/three';
 import * as THREE from 'three';
 import {
@@ -20,6 +20,9 @@ import {
   type PitIndex,
 } from '../../engine';
 import {
+  dropMsForSpeed,
+  eventPaceFromDrop,
+  prefersReducedMotion,
   type EventPace,
   tourPaceFromSpeed,
   TRAVEL_SPEED_DEFAULT,
@@ -47,6 +50,19 @@ import { GroundContactShadow } from './GroundContactShadow';
 import { HomeVeranda } from './HomeVeranda';
 import { FLYER_SCALE_BOOST, HERO_DPR, HOP_ARC_BOOST } from './quality';
 import { StudioLights } from './StudioLights';
+import { truncateTourEvents } from './tourEvents';
+import {
+  HOP_ARC_SEGMENTS,
+  HOP_REST_Y,
+  captureFlightDurationMs,
+  hopDurationMs,
+  hopPoint,
+  randomHopLift,
+  randomHopSkew,
+  type Vec3,
+} from '../hopMath';
+
+export { truncateTourEvents } from './tourEvents';
 
 const MAX_SEEDS = 90;
 const CAM_POS: [number, number, number] = [0.95, 1.35, 1.2];
@@ -54,10 +70,9 @@ const CAM_TARGET: [number, number, number] = [0, 0.03, 0.02];
 const TOUR_BASE_FOV = 34;
 
 /**
- * Keep the demo board clear of the bottom info card. Portrait: widen the lens
- * so the full board fits the narrow view, and bias the view up hard — the
- * card covers roughly the bottom 45% of the screen. Mirrors the play board's
- * ResponsiveFraming (aspect-gated so re-measures never restart framing).
+ * Initial lens fit for the tour stage. Portrait: widen FOV so the board
+ * reads above the bottom info card. Does not lock camera position — OrbitControls
+ * let the user drag/rotate/zoom when the card still covers the board.
  */
 function TourFraming() {
   const camera = useThree((s) => s.camera as THREE.PerspectiveCamera);
@@ -78,12 +93,13 @@ function TourFraming() {
       2 * THREE.MathUtils.radToDeg(Math.atan(halfBase * need)),
       66,
     );
+    // Mild upward bias only — free orbit can reframe past the card.
     if (aspect < 1) {
       camera.setViewOffset(
         size.width,
         size.height,
         0,
-        size.height * 0.16,
+        size.height * 0.1,
         size.width,
         size.height,
       );
@@ -197,7 +213,11 @@ function SeedInstances({ pits }: { pits: number[] }) {
   );
 }
 
-/** Single bead that flies between pits (or to score space) via react-spring. */
+/**
+ * Tour flyer — same hop contract as BlenderBoard play hops:
+ * useFrame + hopPoint arc, gold ribbon, in-bowl land jitter, pop scale/spin.
+ * (react-spring looked softer/floatier than live play.)
+ */
 function FlyingBead({
   flight,
   onFlightDone,
@@ -209,47 +229,131 @@ function FlyingBead({
   const maps = useBoardMaterialMaps();
   const geometry = useMemo(() => extractSeedGeometry(scene), [scene]);
   const material = useMemo(() => getSharedSeedMaterial(maps.seed), [maps.seed]);
-  const { invalidate } = useThree();
+  const meshRef = useRef<THREE.Mesh>(null);
+  const invalidate = useThree((s) => s.invalidate);
   const doneRef = useRef(onFlightDone);
   doneRef.current = onFlightDone;
+  const finishedId = useRef(0);
 
-  const from = flight?.from ?? new THREE.Vector3();
-  const to = flight?.to ?? new THREE.Vector3();
-  const lift = (flight?.lift ?? 0.05) * HOP_ARC_BOOST;
-
-  const spring = useSpring({
-    from: { t: 0 },
-    to: { t: 1 },
-    config: {
-      duration: Math.max(40, flight?.dur ?? 200),
-      easing: (x: number) => x * x * (3 - 2 * x),
-    },
-    onChange: () => invalidate(),
-    onRest: () => {
-      doneRef.current();
-    },
+  const hop = useRef({
+    id: 0,
+    from: [0, HOP_REST_Y, 0] as Vec3,
+    to: [0, HOP_REST_Y, 0] as Vec3,
+    lift: 0,
+    skew: 1,
+    spin0: 0,
+    spin1: 0,
+    start: 0,
+    dur: 280,
+    live: false,
   });
 
-  if (!flight) return null;
+  // Gold arc ribbon — same visual cue as the play board toss.
+  const arcLine = useMemo(() => {
+    const positions = new Float32Array((HOP_ARC_SEGMENTS + 1) * 3);
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const mat = new THREE.LineBasicMaterial({
+      color: new THREE.Color('#f0d9a0'),
+      transparent: true,
+      opacity: 0.75,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const line = new THREE.Line(geom, mat);
+    line.frustumCulled = false;
+    line.visible = false;
+    line.renderOrder = 2;
+    return line;
+  }, []);
 
-  const position = spring.t.to((t: number) => {
-    const x = from.x + (to.x - from.x) * t;
-    const z = from.z + (to.z - from.z) * t;
-    const baseY = from.y + (to.y - from.y) * t;
-    const arc = Math.sin(Math.PI * t) * lift;
-    return [x, baseY + arc, z] as [number, number, number];
+  useEffect(() => {
+    const h = hop.current;
+    if (!flight) {
+      h.live = false;
+      finishedId.current = 0;
+      invalidate();
+      return;
+    }
+    h.id = flight.id;
+    h.from = flight.from;
+    h.to = flight.to;
+    h.lift = flight.lift;
+    h.skew = flight.skew;
+    h.spin0 = Math.random() * Math.PI * 2;
+    h.spin1 = h.spin0 + (Math.random() * 0.9 + 0.55) * Math.PI;
+    h.start = performance.now();
+    h.dur = Math.max(1, flight.dur);
+    h.live = true;
+    finishedId.current = 0;
+    invalidate();
+  }, [flight, invalidate]);
+
+  useFrame(() => {
+    const mesh = meshRef.current;
+    const arc = arcLine;
+    const h = hop.current;
+    if (!mesh) return;
+
+    if (!h.live) {
+      mesh.visible = false;
+      arc.visible = false;
+      return;
+    }
+
+    const elapsed = performance.now() - h.start;
+    const t = Math.min(1, Math.max(0, h.dur > 0 ? elapsed / h.dur : 1));
+    const p = hopPoint(h.from, h.to, t, h.lift, h.skew);
+    mesh.position.set(p[0], p[1], p[2]);
+    mesh.rotation.y = h.spin0 + (h.spin1 - h.spin0) * t;
+    // Same pop-in / settle scale as BlenderBoard FlyingSeed
+    const scaleIn = Math.min(1, t * 8 + (h.lift === 0 ? 1 : 0));
+    const scaleOut = t > 0.92 && h.lift > 0 ? 1 - (t - 0.92) * 0.35 : 1;
+    mesh.scale.setScalar(
+      Math.max(0.05, scaleIn * scaleOut * 1.22 * FLYER_SCALE_BOOST),
+    );
+    mesh.visible = true;
+
+    if (h.lift > 0.001) {
+      const pos = arc.geometry.getAttribute('position') as THREE.BufferAttribute;
+      for (let i = 0; i <= HOP_ARC_SEGMENTS; i++) {
+        const u = (i / HOP_ARC_SEGMENTS) * t;
+        const q = hopPoint(h.from, h.to, u, h.lift, h.skew);
+        pos.setXYZ(i, q[0], q[1], q[2]);
+      }
+      pos.needsUpdate = true;
+      arc.geometry.setDrawRange(0, Math.max(2, Math.floor(t * HOP_ARC_SEGMENTS) + 1));
+      (arc.material as THREE.LineBasicMaterial).opacity =
+        0.2 + 0.65 * Math.sin(Math.PI * Math.min(1, t * 1.15));
+      arc.visible = t > 0.02 && t < 0.98;
+    } else {
+      arc.visible = false;
+    }
+
+    if (t < 1) {
+      invalidate();
+    } else if (finishedId.current !== h.id) {
+      // Resolve at hop end — director lands the pit count on the next tick
+      // (same order as play: hop finishes, then display count updates).
+      finishedId.current = h.id;
+      doneRef.current();
+      invalidate();
+    }
   });
 
   return (
-    <animated.mesh
-      geometry={geometry}
-      material={material}
-      castShadow
-      frustumCulled={false}
-      position={position as unknown as [number, number, number]}
-      rotation-y={spring.t.to((t: number) => t * Math.PI * 1.4)}
-      scale={spring.t.to((t: number) => (1.05 + t * 0.12) * FLYER_SCALE_BOOST)}
-    />
+    <>
+      <mesh
+        ref={meshRef}
+        geometry={geometry}
+        material={material}
+        castShadow={false}
+        frustumCulled={false}
+        visible={false}
+        renderOrder={3}
+      />
+      <primitive object={arcLine} />
+    </>
   );
 }
 
@@ -360,23 +464,38 @@ function PitDecor({
   );
 }
 
-function pitVec(i: number, yLift = 0): THREE.Vector3 {
+/** Bowl-center rest point (Three Y-up), matching play board HOP_REST_Y. */
+function pitHopOrigin(i: number): Vec3 {
   const [x, y, z] = pitPosition(i);
-  return new THREE.Vector3(x, y + 0.012 + yLift, z);
+  return [x, y + HOP_REST_Y, z];
+}
+
+/** Random land inside the bowl — same jitter as BlenderBoard FlyingSeed. */
+function pitHopDest(i: number): Vec3 {
+  const [x, y, z] = pitPosition(i);
+  const r = PITS[i]?.radius ?? BOARD_META.pitRadius;
+  const ja = Math.random() * Math.PI * 2;
+  const jr = Math.sqrt(Math.random()) * r * 0.35;
+  return [
+    x + Math.cos(ja) * jr,
+    y + HOP_REST_Y,
+    z + Math.sin(ja) * jr,
+  ];
 }
 
 type Flight = {
   id: number;
-  from: THREE.Vector3;
-  to: THREE.Vector3;
+  from: Vec3;
+  to: Vec3;
   dur: number;
   lift: number;
+  skew: number;
 };
 
 type Phase =
   | { kind: 'idle' }
   | { kind: 'wait'; until: number; next: () => void }
-  | { kind: 'fly'; onDone: () => void }
+  | { kind: 'fly'; onDone: () => void; deadline: number }
   | { kind: 'hold'; until: number };
 
 /**
@@ -402,19 +521,44 @@ function DemoDirector({
   const pitsRef = useRef(demo.initial.slice());
   const paceRef = useRef(pace);
   paceRef.current = pace;
+  // Stable refs so useFrame always sees the latest loop control.
+  const startLoopRef = useRef<() => void>(() => {});
 
-  // Drive wait/hold timers; flight completion is via spring onRest
+  /** One-shot phase transitions — never re-fire the same wait/hold/fly. */
+  const clearPhase = () => {
+    phase.current = { kind: 'idle' };
+  };
+
+  /** Abort sleep/fly so a cancelled gen can exit awaits (then gen-check). */
+  const abortPhase = () => {
+    const p = phase.current;
+    clearPhase();
+    setFlight(null);
+    if (p.kind === 'wait') p.next();
+    else if (p.kind === 'fly') p.onDone();
+  };
+
+  // Drive wait/hold timers; flight completion is via FlyingBead (with deadline fallback).
   useFrame((state) => {
     state.invalidate();
     const now = performance.now();
     const p = phase.current;
 
     if (p.kind === 'wait' && now >= p.until) {
+      clearPhase();
       p.next();
       return;
     }
+    if (p.kind === 'fly' && now >= p.deadline) {
+      // Safety: if the mesh never reported done (tab freeze / missed frame), unblock.
+      clearPhase();
+      p.onDone();
+      return;
+    }
     if (p.kind === 'hold' && now >= p.until) {
-      startLoop();
+      // Must clear before startLoop — otherwise every frame spawns a new run.
+      clearPhase();
+      startLoopRef.current();
     }
   });
 
@@ -427,22 +571,38 @@ function DemoDirector({
     new Promise<void>((resolve) => {
       phase.current = {
         kind: 'wait',
-        until: performance.now() + ms,
+        until: performance.now() + Math.max(0, ms),
         next: () => resolve(),
       };
     });
 
-  const startFlight = (from: THREE.Vector3, to: THREE.Vector3, dur: number, lift: number) =>
+  const startFlight = (
+    from: Vec3,
+    to: Vec3,
+    dur: number,
+    lift: number,
+    skew = randomHopSkew(),
+  ) =>
     new Promise<void>((resolve) => {
       const id = ++flightId.current;
-      const f: Flight = { id, from, to, dur, lift };
+      const safeDur = Math.max(1, dur);
+      const f: Flight = { id, from, to, dur: safeDur, lift, skew };
       setFlight(f);
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        if (flightId.current === id) setFlight(null);
+        resolve();
+      };
       phase.current = {
         kind: 'fly',
+        // Grace past hopDuration so normal completion wins; deadline is a backstop.
+        deadline: performance.now() + safeDur + 200,
         onDone: () => {
           if (flightId.current !== id) return;
-          setFlight(null);
-          resolve();
+          clearPhase();
+          finish();
         },
       };
     });
@@ -452,17 +612,32 @@ function DemoDirector({
     if (p.kind === 'fly') p.onDone();
   };
 
-  const fly = (fromPit: number, toPit: number, dur: number, lift = 0.048) =>
-    startFlight(pitVec(fromPit, 0.01), pitVec(toPit, 0.01), dur, lift);
+  /**
+   * Pit-to-pit hop — same duration/lift/landing as live BlenderBoard play.
+   * Uses play-speed hop budget so the toss matches the game; the director
+   * still holds the extra tour pacing as settle after the land.
+   */
+  const fly = (fromPit: number, toPit: number, hopBudgetMs: number) => {
+    const dur = hopDurationMs(hopBudgetMs);
+    if (dur <= 0) return Promise.resolve();
+    return startFlight(
+      pitHopOrigin(fromPit),
+      pitHopDest(toPit),
+      dur,
+      randomHopLift(HOP_ARC_BOOST),
+    );
+  };
 
-  const flyToScore = (fromPit: number, side: 'S' | 'N', dur: number) => {
-    const from = pitVec(fromPit, 0.01);
-    const to = new THREE.Vector3(
+  const flyToScore = (fromPit: number, side: 'S' | 'N', captureMs: number) => {
+    const from = pitHopDest(fromPit);
+    const to: Vec3 = [
       side === 'S' ? 0.55 : -0.55,
       0.12,
       side === 'S' ? 0.28 : -0.22,
-    );
-    return startFlight(from, to, dur, 0.08);
+    ];
+    const dur = captureFlightDurationMs(captureMs);
+    if (dur <= 0) return Promise.resolve();
+    return startFlight(from, to, dur, randomHopLift(HOP_ARC_BOOST) * 1.05);
   };
 
   async function playEvents(
@@ -471,12 +646,19 @@ function DemoDirector({
     myGen: number,
   ) {
     let handPos = 0;
+    // Play-speed hop budget (matches live board). Tour P.* stays slower for
+    // holds so teaching captions remain readable.
+    const settings = useGameStore.getState().settings;
+    const reducedMotion = prefersReducedMotion(settings);
+    const playDrop = dropMsForSpeed(settings.travelSpeed, reducedMotion);
+    const playCapture = eventPaceFromDrop(playDrop).capture;
+
     for (const e of events) {
       if (gen.current !== myGen) return;
       const P = paceRef.current;
       // Reduced motion: no flying beads; each event lands as a readable
       // static beat instead of an instant blur.
-      const reduced = P.drop === 0;
+      const reduced = P.drop === 0 || playDrop === 0;
       const beat = (ms: number) => sleep(reduced ? 420 : ms);
       switch (e.type) {
         case 'pickup': {
@@ -493,13 +675,19 @@ function DemoDirector({
         case 'drop': {
           onCaption(e.remainingInHand > 0 ? `Drop · ${e.remainingInHand} in hand` : 'Last drop');
           onHighlight([e.pit]);
-          if (!reduced) await fly(handPos, e.pit, Math.max(40, P.drop));
+          // Hop uses play-speed duration; land count after hop; tour settle fills
+          // the rest of P.drop so total teaching pace stays clear.
           sfx.drop(e.pit);
+          const hopMs = hopDurationMs(playDrop);
+          if (!reduced) await fly(handPos, e.pit, playDrop);
           const pits = pitsRef.current.slice();
           pits[e.pit] = (pits[e.pit] ?? 0) + 1;
           setPits(pits);
           handPos = e.pit;
-          await beat(Math.max(16, Math.round(P.drop * 0.12)));
+          const settle = reduced
+            ? 420
+            : Math.max(0, P.drop - hopMs);
+          if (settle > 0) await beat(settle);
           break;
         }
         case 'continue': {
@@ -525,12 +713,18 @@ function DemoDirector({
           onCaption(total > 0 ? `Capture +${total}` : 'Empty capture');
           onHighlight([...e.pits]);
           if (total > 0) sfx.capture([...e.pits], total);
-          for (let i = 0; i < e.pits.length; i++) {
-            const pit = e.pits[i]!;
-            const amt = e.amounts[i] ?? 0;
-            if (amt <= 0) continue;
-            // One flying bead stands for the pile
-            if (!reduced) await flyToScore(pit, toMove, Math.max(80, P.capture * 0.55));
+          // Share play-speed capture budget across sequential teaching flights
+          // (live play flies them in parallel; tour shows each bowl in turn).
+          const flying = e.pits
+            .map((pit, i) => ({ pit, amt: e.amounts[i] ?? 0 }))
+            .filter((x) => x.amt > 0);
+          const capBudget = playCapture > 0 ? playCapture : P.capture;
+          const share =
+            flying.length > 0
+              ? Math.max(1, Math.floor(capBudget / flying.length))
+              : capBudget;
+          for (const { pit } of flying) {
+            if (!reduced) await flyToScore(pit, toMove, share);
             const pits = pitsRef.current.slice();
             pits[pit] = 0;
             setPits(pits);
@@ -539,7 +733,12 @@ function DemoDirector({
           const pits = pitsRef.current.slice();
           for (const pit of e.pits) pits[pit] = 0;
           setPits(pits);
-          await beat(Math.max(40, P.capture * 0.35));
+          // Residual settle uses tour capture pacing so the lesson can breathe.
+          const used = flying.length * captureFlightDurationMs(share);
+          const settle = Math.max(0, P.capture - used);
+          if (settle > 0 || reduced) {
+            await beat(reduced ? Math.max(40, P.capture * 0.35) : settle || 40);
+          }
           break;
         }
         default:
@@ -574,11 +773,8 @@ function DemoDirector({
       return;
     }
 
-    // Engine sowing always runs to a capture; teaching steps that come before
-    // the capture lesson cut the demo off at the first saada.
     if (demo.stopAt === 'saada') {
-      const cut = events.findIndex((e) => e.type === demo.stopAt);
-      if (cut >= 0) events = events.slice(0, cut);
+      events = truncateTourEvents(events, 'saada');
     }
 
     onCaption('Sowing…');
@@ -591,24 +787,26 @@ function DemoDirector({
   }
 
   function startLoop() {
+    // Cancel any in-flight sleep/hop from the previous cycle before bumping gen.
+    abortPhase();
     const my = ++gen.current;
     void runOnce(my);
   }
+  startLoopRef.current = startLoop;
 
   useEffect(() => {
-    gen.current += 1;
     pitsRef.current = demo.initial.slice();
     onPits(demo.initial.slice());
     startLoop();
     return () => {
       gen.current += 1;
-      phase.current = { kind: 'idle' };
-      setFlight(null);
+      abortPhase();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- restart only when demo identity changes
+    // Restart when the coach step’s demo identity changes (key also remounts us).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [demo]);
 
-return <FlyingBead key={flight?.id ?? 'idle'} flight={flight} onFlightDone={onFlightDone} />;
+  return <FlyingBead flight={flight} onFlightDone={onFlightDone} />;
 }
 
 function TourScene({
@@ -709,6 +907,25 @@ function TourScene({
         resolution={256}
         frames={Infinity}
       />
+      {/* Drag to orbit / pan when the bottom info card covers the board. */}
+      <OrbitControls
+        makeDefault
+        enablePan
+        enableDamping
+        dampingFactor={0.08}
+        minDistance={0.85}
+        maxDistance={4.8}
+        minPolarAngle={0.22}
+        maxPolarAngle={1.35}
+        target={CAM_TARGET}
+        // Keep the board from sliding too far under the HUD card.
+        minAzimuthAngle={-Math.PI * 0.85}
+        maxAzimuthAngle={Math.PI * 0.85}
+        touches={{
+          ONE: THREE.TOUCH.ROTATE,
+          TWO: THREE.TOUCH.DOLLY_PAN,
+        }}
+      />
     </>
   );
 }
@@ -740,7 +957,14 @@ export function TourBoard(props: TourBoardProps) {
             outputColorSpace: THREE.SRGBColorSpace,
           }}
           camera={{ position: CAM_POS, fov: 34, near: 0.05, far: 24 }}
-          style={{ width: '100%', height: '100%', display: 'block' }}
+          style={{
+            width: '100%',
+            height: '100%',
+            display: 'block',
+            touchAction: 'none',
+            // Canvas must receive drags; HUD card uses its own hit targets.
+            pointerEvents: 'auto',
+          }}
           onCreated={({ camera, gl }) => {
             camera.lookAt(...CAM_TARGET);
             gl.setClearColor(0x1a120c, 1);

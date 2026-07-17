@@ -1,12 +1,41 @@
 /**
  * Shared bead-travel pacing for live play and the tour.
  * `travelSpeed` is 1 (slowest) … 10 (fastest).
+ *
+ * Hop visuals live in `src/ui/hopMath.ts` and must stay aligned with these
+ * durations: store commits `animBudgetMs = drop` and sleeps the full drop;
+ * boards hop with hopDurationMs(animBudgetMs) ≤ that budget.
  */
+
+import type { Settings } from './settings';
 
 export const TRAVEL_SPEED_MIN = 1;
 export const TRAVEL_SPEED_MAX = 10;
 /** Default leans slow so sowing is easy to follow. */
 export const TRAVEL_SPEED_DEFAULT = 2;
+
+/**
+ * Long sowings (many drops) skip per-bead hops so counts don't lag the flyer.
+ * Must match store `playEvents` batching and board hop gating.
+ */
+export const BATCH_DROP_THRESHOLD = 60;
+
+/** True when the store should skip hop highlights and per-event sleeps. */
+export function shouldBatchSow(dropMs: number, dropCount: number): boolean {
+  return dropMs <= 0 || dropCount > BATCH_DROP_THRESHOLD;
+}
+
+/** Settings-aware reduced-motion (shared by store + all hop surfaces). */
+export function prefersReducedMotion(
+  settings: Pick<Settings, 'reducedMotionOverride'>,
+): boolean {
+  return (
+    settings.reducedMotionOverride === 'always' ||
+    (settings.reducedMotionOverride === 'auto' &&
+      typeof window !== 'undefined' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches)
+  );
+}
 
 export type EventPace = {
   drop: number;
@@ -37,7 +66,8 @@ export function normalizeTravelSpeed(raw: unknown): number {
 
 export function travelSpeedLabel(level: number): string {
   const s = clampTravelSpeed(level);
-  if (s <= 3) return 'Slow';
+  // Wider "Slow/Normal" band — matches the eased duration curve below.
+  if (s <= 4) return 'Slow';
   if (s <= 6) return 'Normal';
   if (s <= 8) return 'Fast';
   return 'Very fast';
@@ -45,12 +75,24 @@ export function travelSpeedLabel(level: number): string {
 
 /**
  * Base drop duration in ms from a 1–10 speed level.
- * 1 → 420ms, 10 → 55ms (noticeably slower than before).
+ * 1 → ~560ms (easy to follow), 10 → ~120ms (snappy, not a blur).
+ *
+ * Duration eases so the left/mid of the slider stays readable; only the
+ * far-right ticks get truly fast. Linear mapping used to make "Normal"
+ * feel like Fast (mid levels dropped under ~260ms).
+ *
+ * The session store sleeps this full duration between drop highlight and
+ * pit-count land. Visual hops use a slightly shorter duration
+ * (`hopDurationMs` in `src/ui/hopMath.ts`) so the bead settles first.
  */
 export function dropMsForSpeed(level: number, reducedMotion: boolean): number {
   if (reducedMotion) return 0;
   const t = (clampTravelSpeed(level) - 1) / (TRAVEL_SPEED_MAX - 1);
-  return Math.round(420 * (1 - t) + 55 * t);
+  // Ease-in on "fastness": mid-slider spends more time in the slow band.
+  const u = Math.pow(t, 1.45);
+  const slowMs = 560;
+  const fastMs = 120;
+  return Math.round(slowMs * (1 - u) + fastMs * u);
 }
 
 export function eventPaceFromDrop(drop: number): EventPace {

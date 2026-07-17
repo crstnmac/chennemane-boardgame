@@ -172,8 +172,8 @@ button:disabled {
 }
 
 /*
- * Viking buttons — embossed metal plates, not flat CSS pills.
- * Default = dark iron plate · primary = cast bronze · ghost = bare timber edge.
+ * Premium buttons — rounded toast lift (not flat plates / hard 3px bottom edge).
+ * Default = dark iron · primary = bronze · ghost = timber · danger = blood iron.
  */
 .btn {
   --btn-face-top: #3a3028;
@@ -188,7 +188,7 @@ button:disabled {
   justify-content: center;
   gap: 0.4rem;
   padding: 0.88rem 1.4rem;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius);
   font-family: var(--font-ui);
   font-weight: 600;
   letter-spacing: 0.07em;
@@ -209,14 +209,11 @@ button:disabled {
     ),
     linear-gradient(180deg, var(--btn-face-top) 0%, var(--btn-face-mid) 48%, var(--btn-face-bot) 100%);
   box-shadow:
-    /* raised plate */
-    0 1px 0 rgba(255, 230, 190, 0.08),
-    0 3px 0 #0a0806,
-    0 6px 14px rgba(0, 0, 0, 0.4),
-    /* inner rim */
+    0 1px 0 rgba(255, 230, 190, 0.1),
+    0 8px 24px rgba(0, 0, 0, 0.42),
+    0 2px 8px rgba(0, 0, 0, 0.28),
     inset 0 1px 0 rgba(255, 240, 210, 0.12),
-    inset 0 -2px 4px rgba(0, 0, 0, 0.35),
-    inset 0 0 0 1px rgba(0, 0, 0, 0.25);
+    inset 0 -2px 4px rgba(0, 0, 0, 0.32);
   text-shadow: 0 1px 1px rgba(0, 0, 0, 0.45);
   transition:
     transform 0.12s ease,
@@ -230,24 +227,21 @@ button:disabled {
   transform: translateY(-1px);
   border-color: rgba(168, 132, 72, 0.5);
   box-shadow:
-    0 1px 0 rgba(255, 230, 190, 0.12),
-    0 4px 0 #0a0806,
-    0 8px 18px rgba(0, 0, 0, 0.45),
+    0 1px 0 rgba(255, 230, 190, 0.14),
+    0 12px 28px rgba(0, 0, 0, 0.48),
+    0 4px 10px rgba(0, 0, 0, 0.3),
     inset 0 1px 0 rgba(255, 240, 210, 0.16),
-    inset 0 -2px 4px rgba(0, 0, 0, 0.32),
-    inset 0 0 0 1px rgba(0, 0, 0, 0.22);
+    inset 0 -2px 4px rgba(0, 0, 0, 0.28);
 }
 
-/* Pressed into the wood */
+/* Soft press */
 .btn:active:not(:disabled) {
-  transform: translateY(2px);
+  transform: translateY(1px);
   filter: brightness(0.96);
   box-shadow:
-    0 0 0 #0a0806,
-    0 1px 4px rgba(0, 0, 0, 0.5),
-    inset 0 2px 6px rgba(0, 0, 0, 0.55),
-    inset 0 1px 0 rgba(0, 0, 0, 0.3),
-    inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+    0 1px 4px rgba(0, 0, 0, 0.45),
+    inset 0 2px 6px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(0, 0, 0, 0.25);
 }
 
 .btn:disabled {
@@ -284,31 +278,28 @@ button:disabled {
     linear-gradient(180deg, var(--btn-face-top) 0%, var(--btn-face-mid) 46%, var(--btn-face-bot) 100%);
   border-color: var(--btn-edge);
   box-shadow:
-    0 1px 0 rgba(255, 240, 200, 0.35),
-    0 3px 0 #3a2810,
-    0 6px 16px rgba(80, 50, 16, 0.4),
+    0 1px 0 rgba(255, 245, 210, 0.4),
+    0 8px 26px rgba(80, 50, 16, 0.42),
+    0 2px 8px rgba(60, 40, 12, 0.3),
     inset 0 1px 0 rgba(255, 250, 220, 0.55),
-    inset 0 -2px 5px rgba(40, 24, 6, 0.35),
-    inset 0 0 0 1px rgba(90, 60, 20, 0.35);
+    inset 0 -2px 5px rgba(40, 24, 6, 0.3);
 }
 
 .btn-primary:hover:not(:disabled) {
   border-color: #5a3e18;
   box-shadow:
-    0 1px 0 rgba(255, 240, 200, 0.4),
-    0 4px 0 #3a2810,
-    0 8px 20px rgba(90, 55, 18, 0.45),
+    0 1px 0 rgba(255, 245, 210, 0.5),
+    0 12px 30px rgba(90, 55, 18, 0.48),
+    0 4px 10px rgba(60, 40, 12, 0.32),
     inset 0 1px 0 rgba(255, 250, 220, 0.6),
-    inset 0 -2px 5px rgba(40, 24, 6, 0.3),
-    inset 0 0 0 1px rgba(90, 60, 20, 0.3);
+    inset 0 -2px 5px rgba(40, 24, 6, 0.28);
 }
 
 .btn-primary:active:not(:disabled) {
   box-shadow:
-    0 0 0 #3a2810,
     0 1px 4px rgba(40, 24, 8, 0.5),
-    inset 0 2px 8px rgba(50, 30, 8, 0.5),
-    inset 0 1px 0 rgba(0, 0, 0, 0.15);
+    inset 0 2px 8px rgba(50, 30, 8, 0.45),
+    inset 0 1px 0 rgba(0, 0, 0, 0.12);
 }
 
 /* Bare timber edge — secondary */
@@ -329,17 +320,18 @@ button:disabled {
     linear-gradient(180deg, rgba(255, 255, 255, 0.04) 0%, transparent 40%, rgba(0, 0, 0, 0.25) 100%),
     linear-gradient(180deg, var(--btn-face-top), var(--btn-face-bot));
   box-shadow:
-    0 2px 0 #0a0806,
-    0 4px 10px rgba(0, 0, 0, 0.3),
-    inset 0 1px 0 rgba(255, 230, 190, 0.06),
-    inset 0 -1px 3px rgba(0, 0, 0, 0.35);
+    0 1px 0 rgba(255, 230, 190, 0.08),
+    0 6px 18px rgba(0, 0, 0, 0.35),
+    0 2px 6px rgba(0, 0, 0, 0.25),
+    inset 0 1px 0 rgba(255, 230, 190, 0.07),
+    inset 0 -1px 3px rgba(0, 0, 0, 0.32);
 }
 
 .btn-ghost:hover:not(:disabled) {
   border-color: rgba(168, 132, 72, 0.35);
 }
 
-/* Dark iron with blood edge */
+/* Dark iron with blood edge — destructive only */
 .btn-danger {
   --btn-face-top: #8a4848;
   --btn-face-mid: #6a3030;
@@ -354,11 +346,11 @@ button:disabled {
     linear-gradient(180deg, var(--btn-face-top), var(--btn-face-bot));
   border-color: var(--btn-edge);
   box-shadow:
-    0 1px 0 rgba(255, 180, 180, 0.12),
-    0 3px 0 #220c0c,
-    0 5px 12px rgba(40, 10, 10, 0.4),
-    inset 0 1px 0 rgba(255, 200, 200, 0.2),
-    inset 0 -2px 4px rgba(0, 0, 0, 0.4);
+    0 1px 0 rgba(255, 180, 180, 0.14),
+    0 8px 24px rgba(40, 10, 10, 0.42),
+    0 2px 8px rgba(30, 8, 8, 0.3),
+    inset 0 1px 0 rgba(255, 200, 200, 0.22),
+    inset 0 -2px 4px rgba(0, 0, 0, 0.38);
 }
 
 .btn-block {
@@ -385,7 +377,7 @@ button:disabled {
   border: 1px solid var(--border-strong);
   background:
     linear-gradient(180deg, rgba(36, 28, 20, 0.97), rgba(14, 11, 9, 0.99));
-  box-shadow: var(--shadow-deep), var(--shadow-inset);
+  box-shadow: var(--shadow-deep), var(--shadow-toast), var(--shadow-inset);
   overflow: hidden;
 }
 
@@ -494,13 +486,15 @@ button:disabled {
 
 .subpage-top .icon-btn {
   flex-shrink: 0;
-  min-width: 2.5rem;
-  min-height: 2.5rem;
+  min-width: 2.55rem;
+  min-height: 2.55rem;
   display: grid;
   place-items: center;
   border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
   color: var(--ink);
-  background: var(--bg-elevated);
+  background: linear-gradient(180deg, rgba(42, 32, 24, 0.95), rgba(18, 14, 10, 0.98));
+  box-shadow: var(--shadow-toast);
   font-size: 1.1rem;
   line-height: 1;
 }

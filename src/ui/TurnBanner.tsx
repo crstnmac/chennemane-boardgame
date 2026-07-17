@@ -1,6 +1,10 @@
+import { needsSecondSowing } from '../engine';
 import { useGameStore, type TurnPhase } from '../session/store';
 
-function phaseClass(phase: TurnPhase): string {
+function phaseClass(phase: TurnPhase, second: boolean): string {
+  if (second && (phase === 'your-turn' || phase === 'hotseat-turn')) {
+    return 'turn-banner turn-second';
+  }
   switch (phase) {
     case 'your-turn':
       return 'turn-banner turn-you';
@@ -47,16 +51,20 @@ export function TurnBanner() {
 
   if (!committed) return null;
 
+  const second = needsSecondSowing(committed);
   const aiSide = mode === 'ai' ? (humanPlayer === 'S' ? 'North' : 'South') : null;
   const youSide = mode === 'ai' ? (humanPlayer === 'S' ? 'South' : 'North') : null;
 
   return (
-    <div className={phaseClass(turnPhase)} role="status" aria-live="polite">
+    <div className={phaseClass(turnPhase, second)} role="status" aria-live="polite">
       <div className="turn-banner-inner">
         {(turnPhase === 'ai-thinking' || thinking) && (
           <span className="turn-spinner" aria-hidden />
         )}
         <div className="turn-text">
+          {second && (turnPhase === 'your-turn' || turnPhase === 'hotseat-turn') && (
+            <div className="turn-second-chip">Must sow again</div>
+          )}
           <div className="turn-title">{phaseTitle(turnPhase, statusMessage)}</div>
           {statusDetail && <div className="turn-detail">{statusDetail}</div>}
           {mode === 'ai' && (

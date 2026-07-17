@@ -4,7 +4,18 @@ import {
   INDEX_TO_LABEL,
   type PitIndex,
 } from '../../engine';
+import {
+  dropMsForSpeed,
+  prefersReducedMotion,
+} from '../../session/animationPace';
 import { useGameStore, type TurnPhase } from '../../session/store';
+import {
+  hopDurationMs,
+  hopLiftPx2d,
+  hopPoint2d,
+  randomHopSkew,
+  resolveHopBudgetMs,
+} from '../hopMath';
 
 function isAiPhase(phase: TurnPhase): boolean {
   return phase === 'ai-thinking' || phase === 'ai-preview' || phase === 'ai-playing';
@@ -64,7 +75,10 @@ function Pit({
   selected,
   highlight,
   aiPreview,
+  preview,
+  previewKind,
   dimmed,
+  blocked,
   disabled,
   onSelect,
   side,
@@ -78,7 +92,11 @@ function Pit({
   selected: boolean;
   highlight: boolean;
   aiPreview: boolean;
+  preview?: boolean;
+  previewKind?: 'none' | 'path' | 'saada' | 'capture';
   dimmed: boolean;
+  /** Multi-round: pit closed this round (unfilled). */
+  blocked: boolean;
   disabled: boolean;
   onSelect: (p: PitIndex) => void;
   side: 'north' | 'south';
@@ -88,6 +106,7 @@ function Pit({
   const label = INDEX_TO_LABEL[pit] ?? String(pit);
   const grew = count > prevCount;
   const shrank = count < prevCount;
+  const playable = !disabled && legal && !blocked;
 
   return (
     <button
@@ -100,24 +119,34 @@ function Pit({
         selected ? 'is-selected' : '',
         highlight ? 'is-highlight' : '',
         aiPreview ? 'is-ai-preview' : '',
+        preview ? 'is-preview' : '',
+        preview && previewKind === 'capture' ? 'is-preview-capture' : '',
+        preview && previewKind === 'saada' ? 'is-preview-saada' : '',
         dimmed ? 'is-dimmed' : '',
+        blocked ? 'is-blocked' : '',
         grew ? 'is-drop' : '',
         shrank ? 'is-pickup' : '',
         side,
       ]
         .filter(Boolean)
         .join(' ')}
-      disabled={disabled || !legal}
-      onClick={() => onSelect(pit)}
+      disabled={!playable}
+      onClick={() => {
+        if (playable) onSelect(pit);
+      }}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
-          if (!disabled && legal) onSelect(pit);
+          if (playable) onSelect(pit);
         }
       }}
-      aria-label={`${side} pit ${label}, ${count} seeds${legal ? ', can play' : ''}`}
+      aria-label={
+        blocked
+          ? `${side} pit ${label}, closed this round`
+          : `${side} pit ${label}, ${count} seeds${legal ? ', can play' : ''}`
+      }
       aria-pressed={selected || aiPreview}
-      aria-disabled={disabled || !legal}
+      aria-disabled={!playable}
     >
       <span className="pit-bowl">
         <span className="pit-seeds">
@@ -144,8 +173,10 @@ interface Flyer {
 export function PremiumBoard() {
   const committed = useGameStore((s) => s.committed);
   const displayPits = useGameStore((s) => s.displayPits);
+  const displayProtected = useGameStore((s) => s.displayProtected);
   const selectedPit = useGameStore((s) => s.selectedPit);
   const highlightPit = useGameStore((s) => s.highlightPit);
+  const highlightKind = useGameStore((s) => s.highlightKind);
   const turnPhase = useGameStore((s) => s.turnPhase);
   const inputLocked = useGameStore((s) => s.inputLocked);
   const thinking = useGameStore((s) => s.thinking);
@@ -155,6 +186,13 @@ export function PremiumBoard() {
   const pendingDirection = useGameStore((s) => s.pendingDirection);
   const statusMessage = useGameStore((s) => s.statusMessage);
   const hintsEnabled = useGameStore((s) => s.hintsEnabled);
+  const travelSpeed = useGameStore((s) => s.settings.travelSpeed);
+  const animBudgetMs = useGameStore((s) => s.animBudgetMs);
+  const previewPits = useGameStore((s) => s.previewPits);
+  const previewKind = useGameStore((s) => s.previewKind);
+  const settings = useGameStore((s) => s.settings);
+  const reducedMotion = prefersReducedMotion(settings);
+  const previewSet = useMemo(() => new Set(previewPits), [previewPits]);
 
   const boardRef = useRef<HTMLDivElement>(null);
   const pitEls = useRef<Map<number, HTMLButtonElement>>(new Map());
@@ -165,6 +203,9 @@ export function PremiumBoard() {
     null,
   );
   const flyerKey = useRef(0);
+  const hopRaf = useRef(0);
+  /** Last flyer position — mid-hop continuity (same idea as Blender progressRef). */
+  const flyerPosRef = useRef<{ x: number; y: number } | null>(null);
 
   // Track previous pit counts for pop animations
   const [prevCounts, setPrevCounts] = useState<number[]>(() => displayPits.slice());
@@ -173,12 +214,20 @@ export function PremiumBoard() {
     return () => cancelAnimationFrame(id);
   }, [displayPits]);
 
-  // Flying seed when highlight moves during animation
+  // Flying seed: same hop math/duration as 3D play (store dropMs → hopDurationMs)
   useEffect(() => {
     const board = boardRef.current;
-    if (!board || highlightPit === null) {
+    const animating = isAnimatingPhase(turnPhase) || turnPhase === 'ai-preview';
+
+    // Batch sow sets highlightPit null while still animating — clear the flyer
+    // so a stuck bead does not linger over the board.
+    if (!board || highlightPit === null || !animating) {
+      cancelAnimationFrame(hopRaf.current);
       prevHighlight.current = highlightPit;
-      setHandBadge(null);
+      if (highlightPit === null || !animating) {
+        setFlyer(null);
+        flyerPosRef.current = null;
+      }
       return;
     }
 
@@ -187,44 +236,100 @@ export function PremiumBoard() {
 
     const br = board.getBoundingClientRect();
     const tr = target.getBoundingClientRect();
-    const toX = tr.left + tr.width / 2 - br.left;
-    const toY = tr.top + tr.height / 2 - br.top;
+    const to = {
+      x: tr.left + tr.width / 2 - br.left,
+      y: tr.top + tr.height / 2 - br.top,
+    };
 
-    const animating = isAnimatingPhase(turnPhase) || turnPhase === 'ai-preview';
     const fromPit = prevHighlight.current;
+    // Prefer store-committed budget; never invent a sow hop from the HUD.
+    const dropMs = resolveHopBudgetMs(
+      animBudgetMs,
+      highlightKind,
+      travelSpeed,
+      reducedMotion,
+      dropMsForSpeed,
+    );
+    // Match BlenderBoard: only pit-to-pit *drops* use a hop arc; pickup /
+    // continue / capture / saada sit on the active pit.
+    const isHop =
+      highlightKind === 'drop' &&
+      !reducedMotion &&
+      dropMs > 0 &&
+      fromPit !== null &&
+      fromPit !== highlightPit;
 
-    if (animating && fromPit !== null && fromPit !== highlightPit) {
-      const fromEl = pitEls.current.get(fromPit);
-      if (fromEl) {
+    cancelAnimationFrame(hopRaf.current);
+
+    if (isHop) {
+      const fromEl = fromPit !== null ? pitEls.current.get(fromPit) : undefined;
+      // Prefer live flyer position (mid-hop) so chained drops don't snap back.
+      let from = flyerPosRef.current;
+      if (!from && fromEl) {
         const fr = fromEl.getBoundingClientRect();
-        const fromX = fr.left + fr.width / 2 - br.left;
-        const fromY = fr.top + fr.height / 2 - br.top;
-        const key = ++flyerKey.current;
-        const isCapture = statusMessage.toLowerCase().includes('captur');
-
-        // Start at previous pit, then next frame fly to target
-        setFlyer({ x: fromX, y: fromY, key, capture: isCapture });
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            setFlyer({ x: toX, y: toY, key, capture: isCapture });
-          });
-        });
+        from = {
+          x: fr.left + fr.width / 2 - br.left,
+          y: fr.top + fr.height / 2 - br.top,
+        };
       }
-    } else if (animating) {
-      // Stay on current highlight (pickup)
-      setFlyer({ x: toX, y: toY, key: flyerKey.current, capture: false });
-    }
+      if (!from) from = { ...to };
 
-    // Hand / status badge near active pit while sowing / AI preview
-    if (animating) {
-      const short =
-        statusMessage.length > 28 ? statusMessage.slice(0, 26) + '…' : statusMessage;
-      setHandBadge({ x: toX, y: toY - tr.height * 0.65, text: short });
+      const key = ++flyerKey.current;
+      const dur = hopDurationMs(dropMs);
+      const liftPx = hopLiftPx2d(from, to);
+      const skew = randomHopSkew();
+
+      if (dur <= 0) {
+        flyerPosRef.current = to;
+        setFlyer({ x: to.x, y: to.y, key, capture: false });
+      } else {
+        const origin = from;
+        const t0 = performance.now();
+        const tick = (now: number) => {
+          const t = Math.min(1, (now - t0) / dur);
+          const p = hopPoint2d(origin, to, t, liftPx, skew);
+          flyerPosRef.current = p;
+          setFlyer({ x: p.x, y: p.y, key, capture: false });
+          if (t < 1) hopRaf.current = requestAnimationFrame(tick);
+        };
+        flyerPosRef.current = origin;
+        setFlyer({ x: origin.x, y: origin.y, key, capture: false });
+        hopRaf.current = requestAnimationFrame(tick);
+      }
     } else {
-      setHandBadge(null);
+      // Pickup / continue / capture / saada: bead rests on the lit pit
+      flyerPosRef.current = to;
+      setFlyer({
+        x: to.x,
+        y: to.y,
+        key: flyerKey.current,
+        capture: highlightKind === 'capture',
+      });
     }
 
     prevHighlight.current = highlightPit;
+    return () => cancelAnimationFrame(hopRaf.current);
+  }, [highlightPit, highlightKind, turnPhase, animBudgetMs, reducedMotion]);
+
+  // Hand badge tracks status text without restarting the hop rAF.
+  useEffect(() => {
+    const board = boardRef.current;
+    const animating = isAnimatingPhase(turnPhase) || turnPhase === 'ai-preview';
+    if (!board || highlightPit === null || !animating) {
+      setHandBadge(null);
+      return;
+    }
+    const target = pitEls.current.get(highlightPit);
+    if (!target) return;
+    const br = board.getBoundingClientRect();
+    const tr = target.getBoundingClientRect();
+    const short =
+      statusMessage.length > 28 ? statusMessage.slice(0, 26) + '…' : statusMessage;
+    setHandBadge({
+      x: tr.left + tr.width / 2 - br.left,
+      y: tr.top + tr.height / 2 - br.top - tr.height * 0.65,
+      text: short,
+    });
   }, [highlightPit, turnPhase, statusMessage]);
 
   // Clear flyer when animation ends
@@ -248,6 +353,7 @@ export function PremiumBoard() {
   const canInput =
     !inputLocked &&
     !thinking &&
+    !pendingDirection &&
     !isAiPhase(turnPhase) &&
     turnPhase !== 'animating' &&
     turnPhase !== 'pass' &&
@@ -262,6 +368,23 @@ export function PremiumBoard() {
   const isAiPreview = turnPhase === 'ai-preview';
   const yourTurn = turnPhase === 'your-turn' && mode === 'ai';
   const sowing = isAnimatingPhase(turnPhase);
+  // Row focus must respect human-as-North and hotseat (not hard-coded South-you).
+  const northIsYou = mode === 'ai' && humanPlayer === 'N';
+  const southIsYou = mode === 'ai' && humanPlayer === 'S';
+  const matchOver = turnPhase === 'over';
+  const northActive =
+    !matchOver &&
+    (mode === 'ai'
+      ? (northIsYou && yourTurn) || (!northIsYou && aiActive)
+      : committed.toMove === 'N');
+  const southActive =
+    !matchOver &&
+    (mode === 'ai'
+      ? (southIsYou && yourTurn) || (!southIsYou && aiActive)
+      : committed.toMove === 'S');
+  // Dim the row that is not acting so the active side reads clearly.
+  const northDimmed = mode === 'ai' && (northIsYou ? aiActive : yourTurn);
+  const southDimmed = mode === 'ai' && (southIsYou ? aiActive : yourTurn);
 
   const north = [7, 8, 9, 10, 11, 12, 13] as const;
   const south = [0, 1, 2, 3, 4, 5, 6] as const;
@@ -300,7 +423,7 @@ export function PremiumBoard() {
           {mode === 'ai' ? (humanPlayer === 'N' ? 'You' : 'Opponent') : 'North'}
         </div>
 
-        <div className={`pit-row north ${aiActive ? 'row-active' : ''}`}>
+        <div className={`pit-row north ${northActive ? 'row-active' : ''}`}>
           {north.map((pit) => (
             <Pit
               key={pit}
@@ -312,7 +435,10 @@ export function PremiumBoard() {
               selected={selectedPit === pit}
               highlight={highlightPit === pit && !isAiPreview}
               aiPreview={isAiPreview && highlightPit === pit}
-              dimmed={yourTurn}
+              preview={previewSet.has(pit)}
+              previewKind={previewKind}
+              dimmed={northDimmed}
+              blocked={Boolean(displayProtected[pit])}
               disabled={!canInput}
               onSelect={selectPit}
               side="north"
@@ -327,11 +453,7 @@ export function PremiumBoard() {
           <span className="rail-mark" />
         </div>
 
-        <div
-          className={`pit-row south ${
-            yourTurn || (mode === 'hotseat' && committed.toMove === 'S') ? 'row-active' : ''
-          }`}
-        >
+        <div className={`pit-row south ${southActive ? 'row-active' : ''}`}>
           {south.map((pit) => (
             <Pit
               key={pit}
@@ -343,7 +465,10 @@ export function PremiumBoard() {
               selected={selectedPit === pit}
               highlight={highlightPit === pit && !isAiPreview}
               aiPreview={isAiPreview && highlightPit === pit}
-              dimmed={aiActive}
+              preview={previewSet.has(pit)}
+              previewKind={previewKind}
+              dimmed={southDimmed}
+              blocked={Boolean(displayProtected[pit])}
               disabled={!canInput}
               onSelect={selectPit}
               side="south"

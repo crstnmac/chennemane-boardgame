@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { isTerminal } from '../engine';
+import { isTerminal, needsSecondSowing } from '../engine';
+import { buildMatchReport, copyMatchReport } from '../session/matchReport';
 import { matchOutcome } from '../session/outcome';
 import { useGameStore } from '../session/store';
 import { trapFocus } from './a11y/focusTrap';
@@ -27,7 +28,9 @@ export function GameScreen() {
   const aiDifficulty = useGameStore((s) => s.aiDifficulty);
   const travelSpeed = useGameStore((s) => s.settings.travelSpeed);
   const displayHand = useGameStore((s) => s.displayHand);
+  const lastMatchEndReason = useGameStore((s) => s.lastMatchEndReason);
   const updateSettings = useGameStore((s) => s.updateSettings);
+  const [reportCopied, setReportCopied] = useState(false);
 
   const undo = useGameStore((s) => s.undo);
   const redo = useGameStore((s) => s.redo);
@@ -40,17 +43,21 @@ export function GameScreen() {
 
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [resignOpen, setResignOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const leaveDialogRef = useRef<HTMLDivElement>(null);
   const resignDialogRef = useRef<HTMLDivElement>(null);
-  const leaveConfirmRef = useRef<HTMLButtonElement>(null);
-  const resignConfirmRef = useRef<HTMLButtonElement>(null);
+  const menuDialogRef = useRef<HTMLDivElement>(null);
+  /** Safe action gets initial focus — not the destructive one. */
+  const leaveStayRef = useRef<HTMLButtonElement>(null);
+  const resignCancelRef = useRef<HTMLButtonElement>(null);
+  const menuCloseRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!leaveOpen) return;
     const root = leaveDialogRef.current;
     if (!root) return;
     document.body.classList.add('a11y-modal-open');
-    const release = trapFocus(root, leaveConfirmRef.current);
+    const release = trapFocus(root, leaveStayRef.current);
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
@@ -70,7 +77,7 @@ export function GameScreen() {
     const root = resignDialogRef.current;
     if (!root) return;
     document.body.classList.add('a11y-modal-open');
-    const release = trapFocus(root, resignConfirmRef.current);
+    const release = trapFocus(root, resignCancelRef.current);
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
@@ -85,6 +92,26 @@ export function GameScreen() {
     };
   }, [resignOpen]);
 
+  useEffect(() => {
+    if (!menuOpen) return;
+    const root = menuDialogRef.current;
+    if (!root) return;
+    document.body.classList.add('a11y-modal-open');
+    const release = trapFocus(root, menuCloseRef.current);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setMenuOpen(false);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.classList.remove('a11y-modal-open');
+      release();
+    };
+  }, [menuOpen]);
+
   if (!committed) {
     return (
       <div className="play-empty">
@@ -97,13 +124,30 @@ export function GameScreen() {
   }
 
   const terminal = isTerminal(committed);
-  const outcome = matchOutcome(committed, { mode, humanPlayer });
+  const outcome = matchOutcome(committed, {
+    mode,
+    humanPlayer,
+    endReason: lastMatchEndReason,
+  });
   const aiPhase =
     turnPhase === 'ai-thinking' ||
     turnPhase === 'ai-preview' ||
     turnPhase === 'ai-playing';
   const yourTurn = turnPhase === 'your-turn' && mode === 'ai';
-  const canSkip = inputLocked || thinking || aiPhase;
+  // Only enable Skip while an animation / AI sow is actually running.
+  const animRunning =
+    inputLocked ||
+    thinking ||
+    turnPhase === 'animating' ||
+    turnPhase === 'ai-playing' ||
+    turnPhase === 'ai-preview' ||
+    turnPhase === 'ai-thinking' ||
+    turnPhase === 'pass';
+  const canSkip = animRunning && !terminal;
+  const forcedSecond =
+    needsSecondSowing(committed) &&
+    !terminal &&
+    (turnPhase === 'your-turn' || turnPhase === 'hotseat-turn');
 
   const northIsYou = mode === 'ai' && humanPlayer === 'N';
   const southIsYou = mode === 'ai' && humanPlayer === 'S';
@@ -118,13 +162,15 @@ export function GameScreen() {
       (mode === 'ai' && humanPlayer === 'N' && aiPhase) ||
       (mode !== 'ai' && committed.toMove === 'S'));
 
-  const statusTone = aiPhase
-    ? 'ai'
-    : yourTurn
-      ? 'you'
-      : turnPhase === 'pass'
-        ? 'pass'
-        : 'neutral';
+  const statusTone = forcedSecond
+    ? 'second'
+    : aiPhase
+      ? 'ai'
+      : yourTurn
+        ? 'you'
+        : turnPhase === 'pass'
+          ? 'pass'
+          : 'neutral';
 
   const northLabel = northIsYou
     ? 'You · A'
@@ -144,8 +190,13 @@ export function GameScreen() {
     else setScreen('home');
   };
 
+  const dirFixed =
+    committed.config.directionMode === 'fixedCcw' ||
+    committed.config.directionMode === 'fixedCw';
   const contextHint = yourTurn
-    ? 'Choose a pit, then a direction'
+    ? dirFixed
+      ? 'Tap a legal pit on your row'
+      : 'Choose a pit, then a direction'
     : aiPhase
       ? 'Opponent is sowing'
       : mode === 'hotseat'
@@ -162,12 +213,15 @@ export function GameScreen() {
           'play-viewport',
           aiPhase ? 'board-ai-turn' : '',
           yourTurn ? 'board-your-turn' : '',
+          forcedSecond ? 'board-second-sowing' : '',
         ]
           .filter(Boolean)
           .join(' ')}
       >
         <BoardView />
       </div>
+
+      {/* Forced-second uses objective tone only — avoid stacked banners. */}
 
       <div className="play-hud">
         <div className="hud-tl">
@@ -191,7 +245,8 @@ export function GameScreen() {
           </div>
         </div>
 
-        <div className="hud-tr">
+        {/* Desktop / wide: full utility strip */}
+        <div className="hud-tr hud-tr-wide" aria-label="Match controls">
           <button
             type="button"
             className="hud-icon"
@@ -214,11 +269,11 @@ export function GameScreen() {
           </button>
           <button
             type="button"
-            className="hud-icon"
+            className={`hud-icon ${canSkip ? 'is-active-skip' : ''}`}
             onClick={skipAnimation}
             disabled={!canSkip}
-            aria-label="Skip animation"
-            title="Skip"
+            aria-label={canSkip ? 'Skip animation' : 'No animation to skip'}
+            title={canSkip ? 'Skip animation' : 'Nothing to skip'}
           >
             ⏭
           </button>
@@ -248,6 +303,32 @@ export function GameScreen() {
             title="Resign"
           >
             Resign
+          </button>
+        </div>
+
+        {/* Narrow: single Menu control to avoid top-right collision */}
+        <div className="hud-tr hud-tr-narrow">
+          {canSkip && (
+            <button
+              type="button"
+              className="hud-icon is-active-skip"
+              onClick={skipAnimation}
+              aria-label="Skip animation"
+              title="Skip animation"
+            >
+              ⏭
+            </button>
+          )}
+          <button
+            type="button"
+            className="hud-chip"
+            onClick={() => setMenuOpen(true)}
+            aria-haspopup="dialog"
+            aria-expanded={menuOpen}
+            aria-label="Match menu"
+            title="Menu"
+          >
+            Menu
           </button>
         </div>
 
@@ -319,6 +400,91 @@ export function GameScreen() {
 
       <DirectionChooser />
 
+      {menuOpen && (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onClick={() => setMenuOpen(false)}
+        >
+          <div
+            ref={menuDialogRef}
+            className="modal card surface-paper hud-menu-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="match-menu-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="match-menu-title" className="modal-title">
+              Match menu
+            </h2>
+            <div className="hud-menu-actions">
+              <button
+                type="button"
+                className="btn btn-ghost btn-block"
+                disabled={historyPast.length === 0}
+                onClick={() => {
+                  undo();
+                  setMenuOpen(false);
+                }}
+              >
+                Undo
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost btn-block"
+                disabled={historyFuture.length === 0}
+                onClick={() => {
+                  redo();
+                  setMenuOpen(false);
+                }}
+              >
+                Redo
+              </button>
+              <button
+                type="button"
+                className={`btn btn-ghost btn-block ${canSkip ? 'is-skip-ready' : ''}`}
+                disabled={!canSkip}
+                onClick={() => {
+                  skipAnimation();
+                  setMenuOpen(false);
+                }}
+              >
+                {canSkip ? 'Skip animation' : 'Nothing to skip'}
+              </button>
+              <button
+                type="button"
+                className={`btn btn-ghost btn-block ${hintsEnabled ? 'is-on-soft' : ''}`}
+                aria-pressed={hintsEnabled}
+                onClick={() => {
+                  toggleHints();
+                }}
+              >
+                {hintsEnabled ? 'Hints on' : 'Hints off'}
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger btn-block"
+                disabled={terminal}
+                onClick={() => {
+                  setMenuOpen(false);
+                  setResignOpen(true);
+                }}
+              >
+                Resign
+              </button>
+              <button
+                ref={menuCloseRef}
+                type="button"
+                className="btn btn-primary btn-block"
+                onClick={() => setMenuOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {leaveOpen && (
         <div className="modal-backdrop" role="presentation" onClick={() => setLeaveOpen(false)}>
           <div
@@ -338,18 +504,22 @@ export function GameScreen() {
             </p>
             <div className="modal-actions">
               <button
-                ref={leaveConfirmRef}
+                ref={leaveStayRef}
                 type="button"
                 className="btn btn-primary"
+                onClick={() => setLeaveOpen(false)}
+              >
+                Stay
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger"
                 onClick={() => {
                   setLeaveOpen(false);
                   setScreen('home');
                 }}
               >
                 Leave
-              </button>
-              <button type="button" className="btn btn-ghost" onClick={() => setLeaveOpen(false)}>
-                Stay
               </button>
             </div>
           </div>
@@ -375,18 +545,22 @@ export function GameScreen() {
             </p>
             <div className="modal-actions">
               <button
-                ref={resignConfirmRef}
+                ref={resignCancelRef}
                 type="button"
                 className="btn btn-primary"
+                onClick={() => setResignOpen(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger"
                 onClick={() => {
                   setResignOpen(false);
                   resign();
                 }}
               >
                 Resign
-              </button>
-              <button type="button" className="btn btn-ghost" onClick={() => setResignOpen(false)}>
-                Cancel
               </button>
             </div>
           </div>
@@ -396,6 +570,22 @@ export function GameScreen() {
       {showResult && outcome.kind !== 'ongoing' && (
         <ResultOverlay
           outcome={outcome}
+          reportCopied={reportCopied}
+          onCopyReport={() => {
+            const text = buildMatchReport({
+              committed,
+              mode,
+              humanPlayer,
+              aiDifficulty,
+              endReason: lastMatchEndReason,
+            });
+            void copyMatchReport(text).then((ok) => {
+              if (ok) {
+                setReportCopied(true);
+                window.setTimeout(() => setReportCopied(false), 2000);
+              }
+            });
+          }}
           onPlayAgain={() => {
             dismissResult();
             newGame(mode, {

@@ -14,7 +14,7 @@ export function HomeScreen() {
   const setScreen = useGameStore((s) => s.setScreen);
   const aiDifficulty = useGameStore((s) => s.aiDifficulty);
   const coachSeen = useGameStore((s) => s.coachSeen);
-  const setDiff = (d: 'easy' | 'medium') => {
+  const setDiff = (d: 'easy' | 'medium' | 'hard') => {
     useGameStore.setState({ aiDifficulty: d });
   };
 
@@ -61,10 +61,13 @@ export function HomeScreen() {
               <select
                 id="diff"
                 value={aiDifficulty}
-                onChange={(e) => setDiff(e.target.value as 'easy' | 'medium')}
+                onChange={(e) =>
+                  setDiff(e.target.value as 'easy' | 'medium' | 'hard')
+                }
               >
                 <option value="easy">Easy</option>
                 <option value="medium">Medium</option>
+                <option value="hard">Hard</option>
               </select>
             </label>
 

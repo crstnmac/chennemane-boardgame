@@ -166,7 +166,8 @@ export function CoachScreen() {
             </div>
           }
         >
-          <TourBoard {...boardProps} />
+          {/* key forces a clean demo director when the step changes */}
+          <TourBoard key={i} {...boardProps} />
         </Suspense>
         <div className="tour-stage-scrim" />
       </div>

@@ -368,11 +368,16 @@
   right: max(1rem, env(safe-area-inset-right));
   display: flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: 0.4rem;
   z-index: 2;
 }
 
-/* Minimal metal studs — quieter than full emboss for HUD */
+/* Wide: full strip. Narrow: Menu (+ skip when live). */
+.hud-tr-narrow {
+  display: none;
+}
+
+/* Premium HUD studs — toast-like lift + soft radius */
 .hud-icon {
   width: 2.75rem;
   height: 2.75rem;
@@ -380,56 +385,109 @@
   min-height: 2.75rem;
   display: grid;
   place-items: center;
-  border: 1px solid rgba(168, 132, 72, 0.28);
-  border-radius: 0;
+  border: 1px solid rgba(168, 132, 72, 0.32);
+  border-radius: 0.7rem;
   color: var(--ink);
   font-size: 1rem;
   cursor: pointer;
-  background: linear-gradient(180deg, rgba(40, 32, 24, 0.82), rgba(14, 11, 9, 0.88));
+  background: linear-gradient(180deg, rgba(48, 38, 28, 0.92), rgba(16, 12, 10, 0.94));
   box-shadow:
-    0 1px 0 rgba(255, 230, 190, 0.06),
-    0 2px 8px rgba(0, 0, 0, 0.35),
-    inset 0 1px 0 rgba(255, 240, 210, 0.06);
+    0 1px 0 rgba(255, 230, 190, 0.1),
+    0 6px 18px rgba(0, 0, 0, 0.42),
+    0 2px 6px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 rgba(255, 240, 210, 0.1);
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
-  transition: border-color 0.12s ease, background 0.12s ease, transform 0.12s ease;
+  transition:
+    border-color 0.12s ease,
+    background 0.12s ease,
+    transform 0.12s ease,
+    box-shadow 0.12s ease,
+    opacity 0.12s ease;
 }
 
 .hud-icon:hover:not(:disabled) {
-  border-color: rgba(168, 132, 72, 0.45);
-  background: linear-gradient(180deg, rgba(52, 40, 28, 0.85), rgba(18, 14, 10, 0.88));
+  border-color: rgba(168, 132, 72, 0.5);
+  background: linear-gradient(180deg, rgba(58, 46, 34, 0.94), rgba(20, 15, 12, 0.94));
   transform: translateY(-1px);
+  box-shadow:
+    0 1px 0 rgba(255, 230, 190, 0.14),
+    0 8px 22px rgba(0, 0, 0, 0.48),
+    0 3px 8px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 240, 210, 0.12);
 }
 
 .hud-icon:active:not(:disabled) {
   transform: translateY(1px);
-  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.45);
+  box-shadow:
+    0 1px 4px rgba(0, 0, 0, 0.4),
+    inset 0 2px 6px rgba(0, 0, 0, 0.45);
 }
 
 .hud-icon:disabled {
-  opacity: 0.32;
+  opacity: 0.28;
   cursor: not-allowed;
+  box-shadow:
+    0 1px 0 rgba(255, 230, 190, 0.04),
+    0 2px 6px rgba(0, 0, 0, 0.25);
+}
+
+/* Skip only pulses when an animation is actually running */
+.hud-icon.is-active-skip {
+  border-color: rgba(224, 201, 137, 0.65);
+  color: #1a1208;
+  background: linear-gradient(180deg, #f0d9a0, #d4a441 55%, #b88830 100%);
+  box-shadow:
+    0 1px 0 rgba(255, 245, 210, 0.45),
+    0 6px 20px rgba(0, 0, 0, 0.4),
+    0 0 0 1px rgba(90, 64, 28, 0.25),
+    inset 0 1px 0 rgba(255, 250, 220, 0.55);
+  animation: hud-skip-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes hud-skip-pulse {
+  0%,
+  100% {
+    filter: brightness(1);
+  }
+  50% {
+    filter: brightness(1.08);
+  }
 }
 
 .hud-chip {
   height: 2.75rem;
   min-height: 2.75rem;
-  padding: 0 0.85rem;
-  border: 1px solid rgba(168, 132, 72, 0.28);
-  border-radius: 0;
+  padding: 0 0.95rem;
+  border: 1px solid rgba(168, 132, 72, 0.32);
+  border-radius: 0.7rem;
   font-size: 0.75rem;
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--ink-dim);
   cursor: pointer;
-  background: linear-gradient(180deg, rgba(36, 28, 20, 0.82), rgba(14, 11, 9, 0.88));
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-  transition: border-color 0.12s ease, color 0.12s ease, background 0.12s ease;
+  background: linear-gradient(180deg, rgba(42, 32, 24, 0.92), rgba(14, 11, 9, 0.94));
+  box-shadow:
+    0 1px 0 rgba(255, 230, 190, 0.08),
+    0 6px 18px rgba(0, 0, 0, 0.4),
+    0 2px 6px rgba(0, 0, 0, 0.25),
+    inset 0 1px 0 rgba(255, 240, 210, 0.08);
+  transition:
+    border-color 0.12s ease,
+    color 0.12s ease,
+    background 0.12s ease,
+    box-shadow 0.12s ease,
+    transform 0.12s ease;
 }
 
 .hud-chip:hover:not(:disabled) {
   color: var(--ink);
-  border-color: rgba(168, 132, 72, 0.45);
+  border-color: rgba(168, 132, 72, 0.5);
+  transform: translateY(-1px);
+  box-shadow:
+    0 1px 0 rgba(255, 230, 190, 0.12),
+    0 8px 22px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 240, 210, 0.1);
 }
 
 .hud-chip:disabled {
@@ -442,12 +500,40 @@
   border-color: rgba(90, 64, 28, 0.7);
   background: linear-gradient(180deg, #e0c989 0%, #c4a050 55%, #9a7834 100%);
   text-shadow: 0 1px 0 rgba(255, 240, 200, 0.3);
+  box-shadow:
+    0 1px 0 rgba(255, 245, 210, 0.4),
+    0 6px 18px rgba(80, 50, 16, 0.4),
+    inset 0 1px 0 rgba(255, 250, 220, 0.5);
 }
 
 .hud-chip.is-danger {
   color: var(--danger-text);
-  border-color: rgba(200, 96, 88, 0.5);
-  background: linear-gradient(180deg, rgba(90, 36, 32, 0.85), rgba(36, 16, 14, 0.9));
+  border-color: rgba(200, 96, 88, 0.55);
+  background: linear-gradient(180deg, rgba(100, 40, 36, 0.92), rgba(36, 16, 14, 0.94));
+  box-shadow:
+    0 1px 0 rgba(255, 180, 180, 0.1),
+    0 6px 18px rgba(40, 10, 10, 0.4),
+    inset 0 1px 0 rgba(255, 200, 200, 0.12);
+}
+
+.hud-menu-sheet {
+  width: min(22rem, 100%);
+}
+
+.hud-menu-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  margin-top: 0.85rem;
+}
+
+.btn.is-skip-ready {
+  border-color: rgba(224, 201, 137, 0.55);
+}
+
+.btn.is-on-soft {
+  border-color: rgba(196, 160, 80, 0.45);
+  color: var(--accent-bright);
 }
 
 /* Corner scores — large numerals, no glass cards */
@@ -565,6 +651,10 @@
   color: #b8b0c4;
 }
 
+.hud-objective.tone-second .hud-objective-main {
+  color: #f0c070;
+}
+
 .hud-objective.tone-pass .hud-objective-main {
   color: var(--accent-bright);
 }
@@ -603,28 +693,34 @@
     display: none;
   }
 
-  /* Compact top chrome so Back + undo/redo/skip + Hints + Resign fit */
-  .hud-tr {
-    gap: 0.28rem;
+  /* Narrow: collapse utility dump into Menu (+ skip when animating) */
+  .hud-tr-wide {
+    display: none;
+  }
+
+  .hud-tr-narrow {
+    display: flex;
+    gap: 0.35rem;
     max-width: calc(100% - 3.75rem);
-    flex-wrap: wrap;
     justify-content: flex-end;
   }
 
   .hud-icon {
-    width: 2.5rem;
-    height: 2.5rem;
-    min-width: 2.5rem;
-    min-height: 2.5rem;
+    width: 2.55rem;
+    height: 2.55rem;
+    min-width: 2.55rem;
+    min-height: 2.55rem;
     font-size: 0.92rem;
+    border-radius: 0.65rem;
   }
 
   .hud-chip {
-    height: 2.5rem;
-    min-height: 2.5rem;
-    padding: 0 0.65rem;
+    height: 2.55rem;
+    min-height: 2.55rem;
+    padding: 0 0.75rem;
     font-size: 0.7rem;
     letter-spacing: 0.06em;
+    border-radius: 0.65rem;
   }
 
   .hud-score-value {
@@ -717,6 +813,38 @@
   width: min(720px, 100%);
 }
 
+/* Multi-round closed pits on the 2D fallback board */
+.pit-premium.is-blocked {
+  opacity: 0.42;
+  filter: grayscale(0.35);
+  cursor: not-allowed;
+}
+.pit-premium.is-blocked .pit-bowl {
+  box-shadow: inset 0 0 0 2px rgba(40, 28, 18, 0.55);
+}
+
+/* 2D hop bead — position driven by hopMath (same arc timing as 3D play) */
+.seed-flyer {
+  position: absolute;
+  width: 15px;
+  height: 15px;
+  margin: -7.5px 0 0 -7.5px;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 6;
+  background: radial-gradient(circle at 32% 28%, #f2c98a, #c47a3a 52%, #7a3f1c 100%);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.35),
+    inset 0 1px 1px rgba(255, 230, 180, 0.45);
+  will-change: left, top;
+}
+.seed-flyer.is-capture {
+  width: 17px;
+  height: 17px;
+  margin: -8.5px 0 0 -8.5px;
+  background: radial-gradient(circle at 32% 28%, #f0d0a0, #d9a441 50%, #a31f24 100%);
+}
+
 .board-fallback-note {
   text-align: center;
   font-size: 0.72rem;
@@ -761,10 +889,10 @@
   position: relative;
   isolation: isolate;
   border: 1px solid var(--border-strong);
-  border-radius: 0;
+  border-radius: var(--radius-xl);
   padding: 1.3rem 1.25rem 1.05rem;
   background: linear-gradient(180deg, rgba(36, 28, 20, 0.98), rgba(14, 11, 9, 0.99));
-  box-shadow: var(--shadow-deep), var(--shadow-inset);
+  box-shadow: var(--shadow-deep), var(--shadow-toast), var(--shadow-inset);
   text-align: center;
   animation: slide-up 0.22s ease;
   overflow: hidden;
@@ -814,14 +942,14 @@
   gap: 0.65rem;
 }
 
-/* Bronze face plates for direction choice */
+/* Bronze direction choice — toast lift, soft radius */
 .dir-btn {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 0.2rem;
   padding: 1.05rem 0.5rem;
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius);
   color: #1a1208;
   cursor: pointer;
   border: 1px solid rgba(90, 64, 28, 0.8);
@@ -829,11 +957,11 @@
     linear-gradient(180deg, rgba(255, 245, 210, 0.42) 0%, transparent 40%, rgba(40, 24, 6, 0.3) 100%),
     linear-gradient(180deg, #e0c989 0%, #c4a050 48%, #9a7834 100%);
   box-shadow:
-    0 1px 0 rgba(255, 240, 200, 0.3),
-    0 3px 0 #3a2810,
-    0 6px 14px rgba(60, 40, 12, 0.4),
+    0 1px 0 rgba(255, 245, 210, 0.4),
+    0 8px 24px rgba(60, 40, 12, 0.42),
+    0 2px 8px rgba(40, 24, 8, 0.3),
     inset 0 1px 0 rgba(255, 250, 220, 0.5),
-    inset 0 -2px 5px rgba(40, 24, 6, 0.3);
+    inset 0 -2px 5px rgba(40, 24, 6, 0.28);
   text-shadow: 0 1px 0 rgba(255, 240, 200, 0.25);
   transition:
     transform 0.12s ease,
@@ -845,9 +973,9 @@
   filter: brightness(1.06);
   transform: translateY(-2px);
   box-shadow:
-    0 1px 0 rgba(255, 240, 200, 0.35),
-    0 4px 0 #3a2810,
-    0 10px 18px rgba(60, 40, 12, 0.45),
+    0 1px 0 rgba(255, 245, 210, 0.5),
+    0 12px 28px rgba(60, 40, 12, 0.48),
+    0 4px 10px rgba(40, 24, 8, 0.32),
     inset 0 1px 0 rgba(255, 250, 220, 0.55),
     inset 0 -2px 5px rgba(40, 24, 6, 0.28);
 }
@@ -856,7 +984,7 @@
   transform: translateY(1px);
   filter: brightness(0.97);
   box-shadow:
-    0 0 0 #3a2810,
+    0 1px 4px rgba(40, 24, 8, 0.45),
     inset 0 2px 6px rgba(40, 24, 6, 0.45);
 }
 
@@ -1134,6 +1262,56 @@
   color: var(--accent);
 }
 
+.result-end-reason {
+  margin: 0.35rem 0 0.85rem;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: rgba(243, 235, 224, 0.72);
+  text-align: center;
+}
+
+/* Forced second: rim only — copy lives in hud-objective to avoid stacked toasts */
+.play-viewport.board-second-sowing {
+  box-shadow: inset 0 0 0 2px rgba(240, 200, 100, 0.35);
+}
+
+.hud-objective.tone-second {
+  border: 1px solid rgba(224, 201, 137, 0.4);
+  box-shadow:
+    0 8px 28px rgba(0, 0, 0, 0.45),
+    0 0 0 1px rgba(90, 64, 28, 0.2),
+    inset 0 1px 0 rgba(255, 240, 210, 0.08);
+}
+
+.turn-banner.turn-second {
+  border-color: rgba(240, 200, 100, 0.55);
+}
+
+.turn-second-chip {
+  display: inline-block;
+  margin-bottom: 0.25rem;
+  padding: 0.12rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #2a1810;
+  background: #e0c989;
+}
+
+.pit-premium.is-preview {
+  box-shadow: 0 0 0 2px rgba(212, 160, 200, 0.75);
+}
+
+.pit-premium.is-preview-saada {
+  box-shadow: 0 0 0 2px rgba(200, 160, 220, 0.9);
+}
+
+.pit-premium.is-preview-capture {
+  box-shadow: 0 0 0 2px rgba(220, 120, 90, 0.95), 0 0 12px rgba(200, 80, 50, 0.35);
+}
+
 .result-scores {
   display: flex;
   align-items: center;
@@ -1251,7 +1429,14 @@
   position: relative;
   overflow: hidden;
   background: #0e0b09;
-  pointer-events: none;
+  /* Allow drag-to-orbit on the canvas; HUD keeps pointer-events only on controls. */
+  pointer-events: auto;
+  touch-action: none;
+  cursor: grab;
+}
+
+.tour-board-3d:active {
+  cursor: grabbing;
 }
 
 .tour-stage-scrim {

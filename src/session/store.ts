@@ -3,13 +3,17 @@ import {
   applyMove,
   applyPass,
   createGame,
+  defaultPreviewDirection,
   getLegalMoves,
   INDEX_TO_LABEL,
   isTerminal,
   mergeConfig,
   needsSecondSowing,
+  ownedPits,
+  previewMoveConsequences,
   resign as engineResign,
   type GameState,
+  type MatchEndReason,
   type Move,
   type MoveEvent,
   type PitIndex,
@@ -20,6 +24,8 @@ import { sfx, setSoundEnabled } from '../audio/sfx';
 import {
   dropMsForSpeed,
   eventPaceFromDrop,
+  prefersReducedMotion,
+  shouldBatchSow,
 } from './animationPace';
 import { DEFAULT_SETTINGS, loadSettings, saveSettings, type Settings } from './settings';
 import {
@@ -57,6 +63,11 @@ export interface CaptureFlight {
   /** Store the beads travel to. */
   side: 'S' | 'N';
   pits: { pit: number; amount: number }[];
+  /**
+   * Store capture-sleep budget (ms) committed when this flight was emitted.
+   * Visuals must finish within this — do not recompute from the HUD slider.
+   */
+  budgetMs: number;
 }
 
 let captureFlightSeq = 0;
@@ -67,6 +78,7 @@ const HISTORY_CAP = 200;
 const AI_MIN_THINK_MS: Record<Difficulty, number> = {
   easy: 750,
   medium: 1100,
+  hard: 1400,
 };
 
 /** Pause after choosing a pit so player sees which pit AI will sow from. */
@@ -111,6 +123,12 @@ export interface GameSession {
    */
   captureFlight: CaptureFlight | null;
   /**
+   * Drop-base budget (ms) the store committed for the current anim beat.
+   * Boards use this for hopDurationMs / hopSettleMs so the HUD slider cannot
+   * desync visual flight from the sleep already in progress. 0 = no hop.
+   */
+  animBudgetMs: number;
+  /**
    * Seeds remaining in hand during selection / sowing.
    * `null` when not carrying. Updated on pickup / drop / continue.
    */
@@ -127,6 +145,14 @@ export interface GameSession {
   searchCancelled: boolean;
   statusMessage: string;
   statusDetail: string;
+  /** Last matchEnd reason (authoritative for result overlay). */
+  lastMatchEndReason: MatchEndReason | null;
+  /**
+   * Pits highlighted for move preview (saada empty + capture bowls) while
+   * a pit is selected / direction chooser is open.
+   */
+  previewPits: PitIndex[];
+  previewKind: 'none' | 'path' | 'saada' | 'capture';
 
   setScreen: (s: Screen) => void;
   updateSettings: (partial: Partial<Settings>) => void;
@@ -150,18 +176,9 @@ export interface GameSession {
   dismissResult: () => void;
 }
 
-function isReducedMotion(settings: Settings): boolean {
-  return (
-    settings.reducedMotionOverride === 'always' ||
-    (settings.reducedMotionOverride === 'auto' &&
-      typeof window !== 'undefined' &&
-      window.matchMedia('(prefers-reduced-motion: reduce)').matches)
-  );
-}
-
 function eventPacing(settings: Settings) {
   return eventPaceFromDrop(
-    dropMsForSpeed(settings.travelSpeed, isReducedMotion(settings)),
+    dropMsForSpeed(settings.travelSpeed, prefersReducedMotion(settings)),
   );
 }
 
@@ -169,7 +186,15 @@ function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-
+/**
+ * Await pacing, then confirm this animation generation still owns the board.
+ * Skip/undo/newGame bump `animationGeneration` — without this gate, post-sleep
+ * mutations (e.g. landing a drop) would overwrite the restored display board.
+ */
+async function sleepWhileCurrent(ms: number, gen: number): Promise<boolean> {
+  if (ms > 0) await sleep(ms);
+  return useGameStore.getState().animationGeneration === gen;
+}
 
 function dirLabel(dir: 'cw' | 'ccw'): string {
   return dir === 'ccw' ? 'anti-clockwise' : 'clockwise';
@@ -192,15 +217,26 @@ function aiRowHint(human: PlayerId): string {
  */
 function enterMatchOver(
   state: GameState,
-  opts: { playSfx?: boolean; mode: GameMode; humanPlayer: PlayerId },
+  opts: {
+    playSfx?: boolean;
+    mode: GameMode;
+    humanPlayer: PlayerId;
+    endReason?: MatchEndReason | null;
+  },
 ): void {
+  const endReason =
+    opts.endReason ?? useGameStore.getState().lastMatchEndReason ?? null;
   const outcome = matchOutcome(state, {
     mode: opts.mode,
     humanPlayer: opts.humanPlayer,
+    endReason,
   });
   if (outcome.kind === 'ongoing') return;
 
-  if (opts.playSfx) {
+  // Single place for the outcome sting. Skip / resolve / anim-end may all call
+  // this; only the first transition into 'over' may play SFX.
+  const alreadyOver = useGameStore.getState().turnPhase === 'over';
+  if (opts.playSfx !== false && !alreadyOver) {
     const human = opts.mode === 'ai' ? opts.humanPlayer : null;
     const winner =
       outcome.kind === 'draw' ? 'draw' : outcome.winner;
@@ -216,12 +252,42 @@ function enterMatchOver(
     turnPhase: 'over',
     inputLocked: false,
     thinking: false,
+    // Drop in-progress selection so the direction sheet cannot sit on top of results
+    selectedPit: null,
+    pendingDirection: false,
     highlightPit: null,
     highlightPitsExtra: [],
     highlightKind: 'none',
     highlightDir: null,
+    displayHand: null,
+    captureFlight: null,
+    animBudgetMs: 0,
+    lastCaptureSide: null,
+    lastMatchEndReason: endReason ?? outcome.endReason,
+    previewPits: [],
+    previewKind: 'none',
     statusMessage: 'Game over',
     statusDetail: outcomeStatusDetail(outcome),
+  });
+}
+
+function setMovePreview(state: GameState, pit: PitIndex, dir: 'cw' | 'ccw') {
+  const prev = previewMoveConsequences(state, { startPit: pit, direction: dir });
+  if (!prev) {
+    useGameStore.setState({ previewPits: [], previewKind: 'none' });
+    return;
+  }
+  const pits: PitIndex[] = [];
+  if (prev.saadaEmpty !== null) pits.push(prev.saadaEmpty);
+  for (const p of prev.capturePits) pits.push(p);
+  useGameStore.setState({
+    previewPits: pits,
+    previewKind:
+      prev.capturePits.length > 0
+        ? 'capture'
+        : prev.saadaEmpty !== null
+          ? 'saada'
+          : 'path',
   });
 }
 
@@ -247,6 +313,7 @@ export const useGameStore = create<GameSession>((set, get) => ({
   highlightKind: 'none',
   lastCaptureSide: null,
   captureFlight: null,
+  animBudgetMs: 0,
   displayHand: null,
   highlightDir: null,
   selectedPit: null,
@@ -259,8 +326,33 @@ export const useGameStore = create<GameSession>((set, get) => ({
   searchCancelled: false,
   statusMessage: '',
   statusDetail: '',
+  lastMatchEndReason: null,
+  previewPits: [],
+  previewKind: 'none',
 
-  setScreen: (screen) => set({ screen }),
+  setScreen: (screen) => {
+    // Leaving the game mid-anim/AI must cancel resolve loops so they don't
+    // keep mutating state while the user is on home/rules/settings.
+    if (screen !== 'game' && get().screen === 'game') {
+      abortAnim();
+      set({
+        screen,
+        thinking: false,
+        inputLocked: false,
+        pendingDirection: false,
+        selectedPit: null,
+        displayHand: null,
+        captureFlight: null,
+        animBudgetMs: 0,
+        highlightPit: null,
+        highlightPitsExtra: [],
+        highlightKind: 'none',
+        highlightDir: null,
+      });
+      return;
+    }
+    set({ screen });
+  },
 
   updateSettings: (partial) => {
     const settings = { ...get().settings, ...partial };
@@ -272,15 +364,21 @@ export const useGameStore = create<GameSession>((set, get) => ({
   newGame: (mode, opts) => {
     const { settings } = get();
     setSoundEnabled(settings.soundEnabled);
+    // Kill any in-flight anim/AI from the previous match before opening a new one.
+    abortAnim();
     const gen = get().animationGeneration + 1;
     const human = opts?.human ?? 'S';
     const difficulty = opts?.difficulty ?? get().aiDifficulty;
 
-    // Sole ruleset: Ali Guli Mane (+ settings seed/direction/series knobs)
+    // Product surface: Ali Guli Mane only (+ seed/direction/series/residual).
     const engineConfig = mergeConfig({
       initialSeedsPerPit: settings.initialSeedsPerPit,
       directionMode: settings.directionMode,
       matchStructure: settings.multiRound ? 'multi-round-protected' : 'single',
+      residual: settings.residual,
+      secondSowing: 'forced',
+      engineFamily: 'bule-perga',
+      playerCount: 2,
     });
 
     const firstPlayer: PlayerId =
@@ -316,12 +414,19 @@ export const useGameStore = create<GameSession>((set, get) => ({
       highlightKind: 'none',
       highlightDir: null,
       displayHand: null,
+      captureFlight: null,
+      animBudgetMs: 0,
+      lastCaptureSide: null,
       selectedPit: null,
       pendingDirection: false,
       hintsEnabled: settings.hintsDefault,
       animationGeneration: gen,
       lastEvents: [],
       showResult: false,
+      lastMatchEndReason: null,
+      previewPits: [],
+      previewKind: 'none',
+      // Fresh game may need AI search; prior in-flight search was cancelled by abortAnim.
       searchCancelled: false,
       statusMessage: youToMove
         ? 'Your turn'
@@ -338,26 +443,51 @@ export const useGameStore = create<GameSession>((set, get) => ({
   },
 
   selectPit: (pit) => {
-    const { committed, inputLocked, mode, humanPlayer, thinking, displayPits } =
-      get();
-    if (!committed || inputLocked || thinking || isTerminal(committed)) return;
-    if (mode === 'ai' && committed.toMove !== humanPlayer) return;
+    const { committed, inputLocked, mode, humanPlayer, thinking } = get();
+    if (!committed || inputLocked || thinking || humanMoveInFlight || isTerminal(committed))
+      return;
+    if (mode === 'ai' && committed.toMove !== humanPlayer) {
+      set({
+        statusDetail: "Wait for the AI's turn to finish.",
+      });
+      return;
+    }
     const legal = getLegalMoves(committed);
-    if (!legal.some((m) => m.startPit === pit)) return;
+    if (!legal.some((m) => m.startPit === pit)) {
+      // Referee feedback — don't fail silently
+      const own = ownedPits(committed.toMove, committed.config);
+      let detail = 'That pit is not a legal start.';
+      if (!own.includes(pit)) {
+        detail = 'Not your row — pick a pit on your side.';
+      } else if ((committed.pits[pit] ?? 0) <= 0) {
+        detail = 'That pit is empty.';
+      } else if (committed.protectedMask[pit]) {
+        detail = 'That pit is closed for this round.';
+      } else if (needsSecondSowing(committed)) {
+        detail = 'Second sowing: pick a legal pit on your row.';
+      }
+      set({
+        statusMessage: statusHeadline(committed, get()),
+        statusDetail: detail,
+        previewPits: [],
+        previewKind: 'none',
+      });
+      return;
+    }
 
-    const hand = displayPits[pit] ?? committed.pits[pit] ?? 0;
+    // Use committed pits (source of truth), not display mid-animation.
+    const hand = committed.pits[pit] ?? 0;
     const dirMode = committed.config.directionMode;
     sfx.select(pit);
     if (dirMode === 'fixedCcw') {
-      get().clearSelection();
       void playHumanMove({ startPit: pit, direction: 'ccw' });
       return;
     }
     if (dirMode === 'fixedCw') {
-      get().clearSelection();
       void playHumanMove({ startPit: pit, direction: 'cw' });
       return;
     }
+    const previewDir = defaultPreviewDirection(committed);
     set({
       selectedPit: pit,
       pendingDirection: true,
@@ -365,28 +495,48 @@ export const useGameStore = create<GameSession>((set, get) => ({
       highlightPitsExtra: [],
       highlightKind: 'select',
       displayHand: hand > 0 ? hand : null,
-      statusMessage: 'Choose direction',
+      statusMessage: needsSecondSowing(committed)
+        ? 'Second sowing — choose direction'
+        : 'Choose direction',
       statusDetail: `${INDEX_TO_LABEL[pit] ?? pit} · ${hand} remaining.`,
     });
+    setMovePreview(committed, pit, previewDir);
   },
 
-  clearSelection: () =>
+  clearSelection: () => {
+    const s = get();
+    const committed = s.committed;
     set({
       selectedPit: null,
       pendingDirection: false,
       highlightPit: null,
       highlightPitsExtra: [],
       highlightKind: 'none',
+      animBudgetMs: 0,
       displayHand: null,
-      statusMessage: 'Your turn',
-      statusDetail: 'Tap a legal pit on your row.',
-    }),
+      previewPits: [],
+      previewKind: 'none',
+      statusMessage: committed
+        ? statusHeadline(committed, s)
+        : 'Your turn',
+      statusDetail: committed
+        ? statusDetailFor(committed, s)
+        : 'Tap a legal pit on your row.',
+    });
+  },
 
   chooseDirection: (dir) => {
-    const { selectedPit } = get();
-    if (selectedPit === null) return;
+    const { selectedPit, inputLocked, thinking, committed } = get();
+    if (selectedPit === null || inputLocked || thinking || humanMoveInFlight) return;
+    if (!committed || isTerminal(committed)) return;
     const pit = selectedPit;
-    set({ selectedPit: null, pendingDirection: false });
+    // Clear chooser first; playHumanMove claims the input lock immediately.
+    set({
+      selectedPit: null,
+      pendingDirection: false,
+      previewPits: [],
+      previewKind: 'none',
+    });
     void playHumanMove({ startPit: pit, direction: dir });
   },
 
@@ -412,7 +562,11 @@ export const useGameStore = create<GameSession>((set, get) => ({
     set({
       committed: current,
       displayPits: current.pits.slice(),
-      displayScore: { ...current.score },
+      displayScore: {
+        S: current.score.S,
+        N: current.score.N,
+        E: current.score.E ?? 0,
+      },
       displayProtected: current.protectedMask.slice(),
       displayRound: current.roundIndex,
       historyPast: past,
@@ -428,6 +582,9 @@ export const useGameStore = create<GameSession>((set, get) => ({
       highlightKind: 'none',
       highlightDir: null,
       displayHand: null,
+      captureFlight: null,
+      animBudgetMs: 0,
+      lastCaptureSide: null,
       showResult: isTerminal(current),
       statusMessage: isTerminal(current) ? 'Game over' : 'Undid move',
       statusDetail: isTerminal(current)
@@ -436,7 +593,9 @@ export const useGameStore = create<GameSession>((set, get) => ({
           )
         : you
           ? 'Your turn again.'
-          : '',
+          : s.mode === 'hotseat'
+            ? `${current.toMove === 'S' ? 'South' : 'North'} to move.`
+            : statusDetailFor(current, s),
     });
     queueMicrotask(() => get().resolveLoop());
   },
@@ -447,16 +606,36 @@ export const useGameStore = create<GameSession>((set, get) => ({
     abortAnim();
     const future = [...s.historyFuture];
     const past = s.committed ? [...s.historyPast, s.committed] : [...s.historyPast];
-    const current = future.shift()!;
+    let current = future.shift()!;
+
+    // Mirror undo: skip AI-to-move checkpoints so redo restores the post-AI
+    // human position instead of re-searching and wiping historyFuture.
+    while (
+      future.length > 0 &&
+      s.mode === 'ai' &&
+      !isTerminal(current) &&
+      current.toMove !== s.humanPlayer
+    ) {
+      past.push(current);
+      current = future.shift()!;
+    }
+
+    const you = s.mode === 'ai' && current.toMove === s.humanPlayer;
     set({
       committed: current,
       displayPits: current.pits.slice(),
-      displayScore: { ...current.score },
+      displayScore: {
+        S: current.score.S,
+        N: current.score.N,
+        E: current.score.E ?? 0,
+      },
       displayProtected: current.protectedMask.slice(),
       displayRound: current.roundIndex,
       historyPast: past.slice(-HISTORY_CAP),
       historyFuture: future,
       inputLocked: false,
+      thinking: false,
+      searchCancelled: true,
       selectedPit: null,
       pendingDirection: false,
       highlightPit: null,
@@ -464,6 +643,9 @@ export const useGameStore = create<GameSession>((set, get) => ({
       highlightKind: 'none',
       highlightDir: null,
       displayHand: null,
+      captureFlight: null,
+      animBudgetMs: 0,
+      lastCaptureSide: null,
       showResult: isTerminal(current),
       turnPhase: phaseAfterState(current, s),
       statusMessage: isTerminal(current) ? 'Game over' : 'Redid move',
@@ -471,7 +653,11 @@ export const useGameStore = create<GameSession>((set, get) => ({
         ? outcomeStatusDetail(
             matchOutcome(current, { mode: s.mode, humanPlayer: s.humanPlayer }),
           )
-        : '',
+        : you
+          ? 'Your turn again.'
+          : s.mode === 'hotseat'
+            ? `${current.toMove === 'S' ? 'South' : 'North'} to move.`
+            : statusDetailFor(current, s),
     });
     queueMicrotask(() => get().resolveLoop());
   },
@@ -488,7 +674,6 @@ export const useGameStore = create<GameSession>((set, get) => ({
       lastEvents: events,
     });
     enterMatchOver(state, {
-      playSfx: true,
       mode: s.mode,
       humanPlayer: s.humanPlayer,
     });
@@ -500,8 +685,8 @@ export const useGameStore = create<GameSession>((set, get) => ({
     if (!c) return;
     const session = get();
     if (isTerminal(c)) {
+      // enterMatchOver de-dupes SFX if we already transitioned to 'over'
       enterMatchOver(c, {
-        playSfx: false,
         mode: session.mode,
         humanPlayer: session.humanPlayer,
       });
@@ -514,12 +699,19 @@ export const useGameStore = create<GameSession>((set, get) => ({
       displayRound: c.roundIndex,
       inputLocked: false,
       thinking: false,
+      selectedPit: null,
+      pendingDirection: false,
       highlightPit: null,
       highlightPitsExtra: [],
       highlightKind: 'none',
       highlightDir: null,
       displayHand: null,
+      captureFlight: null,
+      animBudgetMs: 0,
+      lastCaptureSide: null,
       turnPhase: phaseAfterState(c, session),
+      statusMessage: statusHeadline(c, session),
+      statusDetail: statusDetailFor(c, session),
     });
     queueMicrotask(() => get().resolveLoop());
   },
@@ -538,7 +730,7 @@ export const useGameStore = create<GameSession>((set, get) => ({
   dismissResult: () => set({ showResult: false }),
 
   resolveLoop: () => {
-    void resolveNonHumanOrPass();
+    scheduleResolve();
   },
 }));
 
@@ -546,7 +738,12 @@ function abortAnim() {
   useGameStore.setState((s) => ({
     animationGeneration: s.animationGeneration + 1,
     inputLocked: false,
+    thinking: false,
     searchCancelled: true,
+    // Drop one-shot board FX so a remount cannot re-fire a stale capture flight
+    captureFlight: null,
+    animBudgetMs: 0,
+    lastCaptureSide: null,
   }));
 }
 
@@ -557,22 +754,66 @@ function pushHistory(prev: GameState) {
   }));
 }
 
+/** Serialize auto-play (pass / AI) so skip+anim-end cannot run two resolve loops. */
+let resolveChain: Promise<void> = Promise.resolve();
+
+function scheduleResolve() {
+  resolveChain = resolveChain
+    .then(() => resolveNonHumanOrPass())
+    .catch(() => {
+      /* keep chain alive after unexpected errors */
+    });
+}
+
+/** Prevents concurrent playHumanMove (double-tap / double key). */
+let humanMoveInFlight = false;
+
 async function playHumanMove(move: Move) {
+  if (humanMoveInFlight) return;
   const s = useGameStore.getState();
-  if (!s.committed || s.inputLocked) return;
+  // selectPit / chooseDirection already gate on lock; reject any held lock here too
+  // (AI / pass / anim). humanMoveInFlight covers double-submit before lock sticks.
+  if (!s.committed || s.thinking || s.inputLocked) return;
+  if (isTerminal(s.committed)) return;
+  if (s.mode === 'ai' && s.committed.toMove !== s.humanPlayer) return;
+
   const legal = getLegalMoves(s.committed);
   if (!legal.some((m) => m.startPit === move.startPit && m.direction === move.direction)) {
     return;
   }
+
+  humanMoveInFlight = true;
   const prev = s.committed;
-  const { state, events } = applyMove(prev, move);
-  pushHistory(prev);
-  await commitAndAnimate(state, events, {
-    actor: playerLabel(prev.toMove, s.mode, s.humanPlayer),
-    isAi: false,
-    captureSide: prev.toMove,
+  const genAtStart = useGameStore.getState().animationGeneration;
+  // Lock immediately so a double-tap cannot apply two moves before animation starts.
+  useGameStore.setState({
+    inputLocked: true,
+    selectedPit: null,
+    pendingDirection: false,
   });
-  useGameStore.getState().resolveLoop();
+  try {
+    let state: GameState;
+    let events: MoveEvent[];
+    try {
+      ({ state, events } = applyMove(prev, move));
+    } catch {
+      useGameStore.setState({ inputLocked: false });
+      return;
+    }
+    pushHistory(prev);
+    await commitAndAnimate(state, events, {
+      actor: playerLabel(prev.toMove, s.mode, s.humanPlayer),
+      isAi: false,
+      captureSide: prev.toMove,
+    });
+    // Only continue auto-play if this move's generation still owns the board
+    // (skip/undo bumps gen and schedules its own resolve).
+    if (useGameStore.getState().animationGeneration === genAtStart) {
+      scheduleResolve();
+    }
+  } finally {
+    humanMoveInFlight = false;
+  }
 }
 
 async function commitAndAnimate(
@@ -599,18 +840,9 @@ async function commitAndAnimate(
 
   if (isTerminal(state)) {
     enterMatchOver(state, {
-      playSfx: false, // already played on matchEnd event during playEvents
       mode: cur.mode,
       humanPlayer: cur.humanPlayer,
     });
-    // Ensure display synced if matchEnd was skipped (e.g. reduced motion race)
-    if (!events.some((e) => e.type === 'matchEnd')) {
-      enterMatchOver(state, {
-        playSfx: true,
-        mode: cur.mode,
-        humanPlayer: cur.humanPlayer,
-      });
-    }
     return;
   }
 
@@ -628,6 +860,10 @@ async function commitAndAnimate(
     highlightKind: 'none',
     highlightDir: null,
     displayHand: null,
+    // Flight FX is one-shot; drop it so a later remount cannot re-fire.
+    captureFlight: null,
+    animBudgetMs: 0,
+    lastCaptureSide: null,
     statusMessage: statusHeadline(state, cur),
     statusDetail: statusDetailFor(state, cur),
   });
@@ -652,7 +888,7 @@ function statusHeadline(
   if (isTerminal(state)) return 'Game over';
   if (needsSecondSowing(state)) {
     const who = playerLabel(state.toMove, session.mode, session.humanPlayer);
-    return who === 'You' ? 'Second sowing' : `${who}: second sowing`;
+    return who === 'You' ? 'Capture! Sow again' : `${who}: second sowing`;
   }
   if (session.mode === 'ai') {
     return state.toMove === session.humanPlayer ? 'Your turn' : "AI's turn";
@@ -667,9 +903,9 @@ function statusDetailFor(
   if (isTerminal(state)) return '';
   if (needsSecondSowing(state)) {
     if (session.mode === 'ai' && state.toMove === session.humanPlayer) {
-      return 'Pick another pit on your row.';
+      return 'You captured — you must sow again from a legal pit.';
     }
-    return 'Extra turn after a capture.';
+    return 'Forced second sowing after a capture.';
   }
   if (session.mode === 'ai' && state.toMove === session.humanPlayer) {
     return humanRowHint(session.humanPlayer);
@@ -695,7 +931,7 @@ async function playEvents(
     if (useGameStore.getState().animationGeneration !== gen) return;
     // Re-read speed each event so the HUD slider applies mid-sowing
     const pace = eventPacing(useGameStore.getState().settings);
-    const batch = pace.drop === 0 || dropCount > 60;
+    const batch = shouldBatchSow(pace.drop, dropCount);
     lastBatch = batch;
     switch (e.type) {
       case 'pickup':
@@ -703,34 +939,41 @@ async function playEvents(
         pits[e.pit] = 0;
         useGameStore.setState({
           displayPits: pits.slice(),
-          highlightPit: e.pit,
+          // Batch: no hop highlights (same rule as drop) — counts must not lag.
+          highlightPit: batch ? null : e.pit,
           highlightPitsExtra: [],
-          highlightKind: 'pickup',
+          highlightKind: batch ? 'none' : 'pickup',
+          // Drop-base budget for settle visuals (same drop the store paced from).
+          animBudgetMs: batch ? 0 : pace.drop,
           displayHand: e.count,
           statusMessage: meta.isAi ? `${meta.actor} picks up` : 'Pick up',
           statusDetail: `${e.count} remaining · from ${INDEX_TO_LABEL[e.pit] ?? e.pit}`,
         });
-        if (pace.pickup) await sleep(pace.pickup);
+        if (!(await sleepWhileCurrent(batch ? 0 : pace.pickup, gen))) return;
         break;
       case 'drop':
-        // Start hop first; only land the bead in displayPits when the hop
-        // finishes — otherwise the pit gains a seed while one is still flying
-        // (double-count / “teleport then hop” look).
-        // Remaining count decrements as each seed leaves the hand.
+        // Hop contract (shared with Blender / Tour / Premium via hopMath):
+        // 1) highlightKind 'drop' → boards hop for hopDurationMs(animBudgetMs)
+        // 2) sleep full pace.drop so the bead finishes before the count lands
+        // 3) only then increment displayPits (avoids double-count / teleport)
+        // Batch / reduced-motion: do NOT use 'drop' — sleep is 0 and hop
+        // visuals would lag far behind the count updates.
         useGameStore.setState({
-          highlightPit: e.pit,
+          highlightPit: batch ? null : e.pit,
           highlightPitsExtra: [],
-          highlightKind: 'drop',
+          highlightKind: batch ? 'none' : 'drop',
+          // Boards read this exact budget — not a fresh HUD slider sample.
+          animBudgetMs: batch ? 0 : pace.drop,
           displayHand: e.remainingInHand > 0 ? e.remainingInHand : null,
           statusDetail:
             e.remainingInHand > 0
               ? `${e.remainingInHand} remaining`
               : 'Last seed',
         });
-        if (!batch) {
-          sfx.drop(e.pit);
-          if (pace.drop) await sleep(pace.drop);
-        }
+        if (!batch) sfx.drop(e.pit);
+        // Must re-check gen after the hop wait — skip/undo restores displayPits
+        // and must not be overwritten by this delayed land.
+        if (!(await sleepWhileCurrent(batch ? 0 : pace.drop, gen))) return;
         pits[e.pit] = (pits[e.pit] ?? 0) + 1;
         useGameStore.setState({ displayPits: pits.slice() });
         break;
@@ -739,25 +982,27 @@ async function playEvents(
         pits[e.pit] = 0;
         useGameStore.setState({
           displayPits: pits.slice(),
-          highlightPit: e.pit,
+          highlightPit: batch ? null : e.pit,
           highlightPitsExtra: [],
-          highlightKind: 'continue',
+          highlightKind: batch ? 'none' : 'continue',
+          animBudgetMs: batch ? 0 : pace.drop,
           displayHand: e.count,
           statusDetail: `Continue · ${e.count} remaining · ${INDEX_TO_LABEL[e.pit] ?? e.pit}`,
         });
-        if (pace.continue) await sleep(pace.continue);
+        if (!(await sleepWhileCurrent(batch ? 0 : pace.continue, gen))) return;
         break;
       case 'saada':
-        sfx.saada(e.emptyPit);
+        if (!batch) sfx.saada(e.emptyPit);
         useGameStore.setState({
-          highlightPit: e.emptyPit,
+          highlightPit: batch ? null : e.emptyPit,
           highlightPitsExtra: [],
-          highlightKind: 'saada',
+          highlightKind: batch ? 'none' : 'saada',
+          animBudgetMs: batch ? 0 : pace.drop,
           displayHand: null,
           statusMessage: 'Saada',
           statusDetail: `${INDEX_TO_LABEL[e.emptyPit] ?? e.emptyPit} empty; capturing next.`,
         });
-        if (pace.saada) await sleep(pace.saada);
+        if (!(await sleepWhileCurrent(batch ? 0 : pace.saada, gen))) return;
         break;
       case 'capture': {
         const total = e.amounts.reduce((a, b) => a + b, 0);
@@ -769,63 +1014,100 @@ async function playEvents(
           for (const p of e.pits) pits[p] = 0;
           useGameStore.setState({
             displayPits: pits.slice(),
-            highlightPit: allCap[0] ?? null,
-            highlightPitsExtra: allCap.slice(1),
-            highlightKind: 'saada',
+            highlightPit: batch ? null : (allCap[0] ?? null),
+            highlightPitsExtra: batch ? [] : allCap.slice(1),
+            highlightKind: batch ? 'none' : 'saada',
+            animBudgetMs: batch ? 0 : pace.drop,
             displayHand: null,
             statusMessage: 'Saada',
             statusDetail: 'Nothing to capture — turn ends.',
           });
-          if (pace.saada) await sleep(Math.min(220, pace.saada));
+          if (
+            !(await sleepWhileCurrent(
+              batch ? 0 : Math.min(220, pace.saada),
+              gen,
+            ))
+          ) {
+            return;
+          }
           break;
         }
 
         // Flash each capture bowl before clearing (collect animation)
         useGameStore.setState({
-          highlightPit: allCap[0] ?? null,
-          highlightPitsExtra: allCap.slice(1),
-          highlightKind: 'capture',
+          highlightPit: batch ? null : (allCap[0] ?? null),
+          highlightPitsExtra: batch ? [] : allCap.slice(1),
+          highlightKind: batch ? 'none' : 'capture',
+          animBudgetMs: batch ? 0 : pace.drop,
           statusMessage: `${meta.actor} captures`,
           statusDetail: allCap.map((p) => INDEX_TO_LABEL[p] ?? p).join(', '),
         });
         // Brief hold so both bowls pulse before seeds vanish
-        if (pace.capture) await sleep(Math.min(280, Math.round(pace.capture * 0.35)));
+        if (
+          !(await sleepWhileCurrent(
+            batch
+              ? 0
+              : pace.capture > 0
+                ? Math.min(280, Math.round(pace.capture * 0.35))
+                : 0,
+            gen,
+          ))
+        ) {
+          return;
+        }
 
         for (let i = 0; i < e.pits.length; i++) {
           const p = e.pits[i]!;
           pits[p] = 0;
         }
-        const committed = useGameStore.getState().committed;
-        if (committed) {
-          score = { ...committed.score };
+        // Credit the capturer from the running display score — do not read
+        // committed.score here. On multi-round round-ends, committed is already
+        // reseeded (banks after refill), which would flash the wrong totals.
+        // Incremental also handles multi-capture sowings (e.g. pallanguzhi).
+        if (captureSide === 'S' || captureSide === 'N' || captureSide === 'E') {
+          score = {
+            ...score,
+            [captureSide]: (score[captureSide] ?? 0) + total,
+          };
         }
         const flightSide =
           captureSide === 'S' || captureSide === 'N' ? captureSide : null;
+        // No coconut flight in batch — drops already skipped hops; flight would
+        // outlive the rest of the (instant) turn presentation.
         const flight: CaptureFlight | null =
-          flightSide && pace.capture > 0
+          !batch && flightSide && pace.capture > 0
             ? {
                 id: ++captureFlightSeq,
                 side: flightSide,
                 pits: e.pits
                   .map((p, i) => ({ pit: p, amount: e.amounts[i] ?? 0 }))
                   .filter((x) => x.amount > 0),
+                // Visual flight must finish within this store sleep.
+                budgetMs: pace.capture,
               }
             : null;
         useGameStore.setState({
           displayPits: pits.slice(),
           displayScore: score,
-          highlightPit: allCap[0] ?? null,
-          highlightPitsExtra: allCap.slice(1),
-          highlightKind: 'capture',
+          highlightPit: batch ? null : (allCap[0] ?? null),
+          highlightPitsExtra: batch ? [] : allCap.slice(1),
+          highlightKind: batch ? 'none' : 'capture',
+          animBudgetMs: batch ? 0 : pace.drop,
           displayHand: null,
-          lastCaptureSide: captureSide,
+          lastCaptureSide: batch ? null : captureSide,
           captureFlight: flight,
           statusMessage: `${meta.actor} +${total}`,
           statusDetail: e.pits.map((p) => INDEX_TO_LABEL[p] ?? p).join(', '),
         });
         sfx.capture(e.pits, total);
-        if (pace.capture) await sleep(pace.capture);
-        useGameStore.setState({ lastCaptureSide: null });
+        if (!(await sleepWhileCurrent(batch ? 0 : pace.capture, gen))) return;
+        // Flight budget is over — clear so a stale id cannot linger into the
+        // next beat / turn (CaptureFlightSeeds only reacts to id changes).
+        // Keep animBudgetMs until the next event / commit cleanup so boards do
+        // not restart a settle when only the flight id is cleared.
+        if (!batch) {
+          useGameStore.setState({ lastCaptureSide: null, captureFlight: null });
+        }
         break;
       }
       case 'pass':
@@ -835,26 +1117,26 @@ async function playEvents(
           statusMessage: `${meta.actor} passes`,
           statusDetail: 'Empty row.',
         });
-        if (pace.pass) await sleep(pace.pass);
+        if (!(await sleepWhileCurrent(pace.pass, gen))) return;
         break;
       case 'turnEnd':
-        if (pace.endBeat) await sleep(pace.endBeat);
+        if (!(await sleepWhileCurrent(pace.endBeat, gen))) return;
         break;
       case 'roundEnd': {
         // Board is spent; committed already holds the reseeded next round.
-        const session = useGameStore.getState();
-        const next = session.committed;
+        // Snapshot before waits so a mid-wait commit swap does not reseed wrong.
+        const next = useGameStore.getState().committed;
         sfx.round();
         useGameStore.setState({
           highlightPit: null,
           highlightPitsExtra: [],
           highlightKind: 'none',
+          animBudgetMs: 0,
           statusMessage: `Round ${e.roundIndex + 1} complete`,
           statusDetail: 'Re-seeding from winnings…',
         });
         // Hold the spent board a beat, then present the reseeded one.
-        await sleep(Math.max(700, pace.hold));
-        if (useGameStore.getState().animationGeneration !== gen) return;
+        if (!(await sleepWhileCurrent(Math.max(700, pace.hold), gen))) return;
         if (next) {
           pits = next.pits.slice();
           score = { ...next.score };
@@ -871,18 +1153,21 @@ async function playEvents(
                 : 'All pits refilled.',
           });
         }
-        await sleep(Math.max(500, pace.reset));
+        if (!(await sleepWhileCurrent(Math.max(500, pace.reset), gen))) return;
         break;
       }
       case 'matchEnd': {
+        // Outcome SFX is owned by enterMatchOver (after anim) so skip/abort
+        // cannot double-play or silence the sting.
+        const endReason = e.reason;
+        useGameStore.setState({ lastMatchEndReason: endReason });
         const session = useGameStore.getState();
-        const human = session.mode === 'ai' ? session.humanPlayer : null;
-        sfx.matchOutcome(e.winner, human);
         const detail = session.committed
           ? outcomeStatusDetail(
               matchOutcome(session.committed, {
                 mode: session.mode,
                 humanPlayer: session.humanPlayer,
+                endReason,
               }),
             )
           : '';
@@ -890,27 +1175,28 @@ async function playEvents(
           statusMessage: 'Game over',
           statusDetail: detail,
         });
-        if (pace.capture) await sleep(pace.capture);
+        if (!(await sleepWhileCurrent(pace.capture, gen))) return;
         break;
       }
       default:
         break;
     }
   }
-  if (lastBatch) {
+  if (lastBatch && useGameStore.getState().animationGeneration === gen) {
     const pace = eventPacing(useGameStore.getState().settings);
     if (pace.drop > 0) sfx.drop();
   }
 }
 
 async function resolveNonHumanOrPass() {
-  const maxIter = 24;
+  // Safety cap per chain entry; if still auto-play after this, we re-schedule
+  // rather than soft-locking (e.g. AI forced second after many pass steps).
+  const maxIter = 48;
   for (let i = 0; i < maxIter; i++) {
     const s = useGameStore.getState();
     if (!s.committed || s.inputLocked) return;
     if (isTerminal(s.committed)) {
       enterMatchOver(s.committed, {
-        playSfx: false,
         mode: s.mode,
         humanPlayer: s.humanPlayer,
       });
@@ -928,8 +1214,29 @@ async function resolveNonHumanOrPass() {
       });
       await sleep(500);
       if (useGameStore.getState().animationGeneration !== s.animationGeneration) return;
-      const prev = useGameStore.getState().committed!;
-      const { state, events } = applyPass(prev);
+      const prev = useGameStore.getState().committed;
+      if (!prev || isTerminal(prev)) {
+        if (prev && isTerminal(prev)) {
+          enterMatchOver(prev, {
+            mode: s.mode,
+            humanPlayer: s.humanPlayer,
+          });
+        }
+        return;
+      }
+      // Board may have changed during the pause — only pass if still empty-handed.
+      if (getLegalMoves(prev).length > 0) {
+        useGameStore.setState({ inputLocked: false });
+        continue;
+      }
+      let state: GameState;
+      let events: MoveEvent[];
+      try {
+        ({ state, events } = applyPass(prev));
+      } catch {
+        useGameStore.setState({ inputLocked: false, thinking: false });
+        continue;
+      }
       pushHistory(prev);
       await commitAndAnimate(state, events, {
         actor: who,
@@ -952,8 +1259,8 @@ async function resolveNonHumanOrPass() {
           searchCancelled: false,
           inputLocked: true,
           highlightPit: null,
-      highlightPitsExtra: [],
-      highlightKind: 'none',
+          highlightPitsExtra: [],
+          highlightKind: 'none',
           highlightDir: null,
           statusMessage: "AI's turn",
           statusDetail: 'Thinking…',
@@ -972,7 +1279,7 @@ async function resolveNonHumanOrPass() {
       }
 
       if (useGameStore.getState().animationGeneration !== genAtStart) {
-        useGameStore.setState({ thinking: false, inputLocked: false });
+        // Abort already unlocked; do not clear a newer loop's locks.
         return;
       }
 
@@ -984,8 +1291,19 @@ async function resolveNonHumanOrPass() {
           cancelled: () => useGameStore.getState().searchCancelled,
         });
       } catch {
-        useGameStore.setState({ thinking: false, inputLocked: false });
-        return;
+        if (useGameStore.getState().animationGeneration !== genAtStart) {
+          return;
+        }
+        // Search should not throw when moves exist; if a child node blows up
+        // (invariant/max-drops), fall back to any legal move so we never leave
+        // the AI side unlocked with no resolve scheduled.
+        const live = useGameStore.getState().committed;
+        const fallback = live ? getLegalMoves(live) : [];
+        if (fallback.length === 0) {
+          useGameStore.setState({ thinking: false, inputLocked: false });
+          continue;
+        }
+        move = fallback[0]!;
       }
 
       // Keep "thinking" visible for a minimum duration
@@ -996,11 +1314,12 @@ async function resolveNonHumanOrPass() {
       }
 
       if (useGameStore.getState().animationGeneration !== genAtStart) {
-        useGameStore.setState({ thinking: false, inputLocked: false });
         return;
       }
 
       // Preview: show which pit + direction before seeds move
+      const previewSeeds =
+        (useGameStore.getState().committed ?? snapshot).pits[move.startPit] ?? 0;
       useGameStore.setState({
         thinking: false,
         turnPhase: 'ai-preview',
@@ -1009,17 +1328,41 @@ async function resolveNonHumanOrPass() {
         highlightKind: 'ai',
         highlightDir: move.direction,
         statusMessage: 'AI move',
-        statusDetail: `${INDEX_TO_LABEL[move.startPit] ?? move.startPit}, ${dirLabel(move.direction)}, ${snapshot.pits[move.startPit]} seeds`,
+        statusDetail: `${INDEX_TO_LABEL[move.startPit] ?? move.startPit}, ${dirLabel(move.direction)}, ${previewSeeds} seeds`,
       });
       await sleep(AI_PREVIEW_MS);
 
       if (useGameStore.getState().animationGeneration !== genAtStart) {
-        useGameStore.setState({ thinking: false, inputLocked: false, highlightPit: null });
         return;
       }
 
-      const prev = useGameStore.getState().committed!;
-      const { state, events } = applyMove(prev, move);
+      const prev = useGameStore.getState().committed;
+      if (!prev || isTerminal(prev)) {
+        useGameStore.setState({ thinking: false, inputLocked: false, highlightPit: null });
+        if (prev && isTerminal(prev)) {
+          enterMatchOver(prev, {
+            mode: s.mode,
+            humanPlayer: s.humanPlayer,
+          });
+        }
+        return;
+      }
+      // Re-validate — undo/race can invalidate the searched move.
+      const stillLegal = getLegalMoves(prev).some(
+        (m) => m.startPit === move.startPit && m.direction === move.direction,
+      );
+      if (!stillLegal) {
+        useGameStore.setState({ thinking: false, inputLocked: false, highlightPit: null });
+        continue;
+      }
+      let state: GameState;
+      let events: MoveEvent[];
+      try {
+        ({ state, events } = applyMove(prev, move));
+      } catch {
+        useGameStore.setState({ thinking: false, inputLocked: false, highlightPit: null });
+        continue;
+      }
       pushHistory(prev);
       await commitAndAnimate(state, events, {
         actor: 'AI',
@@ -1042,6 +1385,18 @@ async function resolveNonHumanOrPass() {
       statusDetail: statusDetailFor(s.committed, s),
     });
     return;
+  }
+
+  // Cap hit but auto-play still required (AI second sowing, pass chains, …)
+  const leftover = useGameStore.getState();
+  if (
+    leftover.committed &&
+    !leftover.inputLocked &&
+    !isTerminal(leftover.committed) &&
+    (getLegalMoves(leftover.committed).length === 0 ||
+      (leftover.mode === 'ai' && leftover.committed.toMove !== leftover.humanPlayer))
+  ) {
+    queueMicrotask(() => scheduleResolve());
   }
 }
 

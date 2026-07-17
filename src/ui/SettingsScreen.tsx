@@ -115,6 +115,23 @@ export function SettingsScreen() {
           </label>
         </div>
 
+        <div className="field">
+          <label htmlFor="residual">Residual seeds at match end</label>
+          <select
+            id="residual"
+            value={settings.residual}
+            onChange={(e) =>
+              set('residual', e.target.value as Settings['residual'])
+            }
+          >
+            <option value="unclaimed">Unclaimed (default) — leftover seed not scored</option>
+            <option value="to-last-mover">To last mover — leftover seeds go to who just played</option>
+          </select>
+          <p className="field-hint">
+            Applies to single matches and multi-round board ends. (New games)
+          </p>
+        </div>
+
         <div className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: '0.55rem' }}>
           <input
             id="sound"

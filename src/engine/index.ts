@@ -6,6 +6,7 @@ export type {
   EmptySideMode,
   EngineFamily,
   GameState,
+  MatchEndReason,
   MatchStructure,
   Move,
   MoveEvent,
@@ -25,6 +26,7 @@ export {
   LABEL_TO_INDEX,
   nextPit,
   nextPlayer,
+  previousPlayer,
   opposite,
   ownedPits,
   ownerOf,
@@ -49,4 +51,12 @@ export {
   needsSecondSowing,
 } from './turn';
 export { assertInvariants, totalBoardSeeds, totalScore } from './invariants';
-export { tryAdvanceMultiRound } from './multiRound';
+export {
+  tryAdvanceMultiRound,
+  settleResidualSeeds,
+  classifyMatchEndReason,
+} from './multiRound';
+export {
+  previewMoveConsequences,
+  defaultPreviewDirection,
+} from './preview';

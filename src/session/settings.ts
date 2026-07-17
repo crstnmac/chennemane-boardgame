@@ -1,4 +1,4 @@
-import type { DirectionMode } from '../engine';
+import type { DirectionMode, ResidualMode } from '../engine';
 import {
   normalizeTravelSpeed,
   TRAVEL_SPEED_DEFAULT,
@@ -6,6 +6,10 @@ import {
 
 export type SettingsSeedCount = 4 | 5 | 6;
 
+/**
+ * Product settings for Ali Guli Mane only.
+ * Experimental engine families (kalah / pallanguzhi / 3p) stay out of this surface.
+ */
 export interface Settings {
   initialSeedsPerPit: SettingsSeedCount;
   directionMode: DirectionMode;
@@ -15,6 +19,11 @@ export interface Settings {
    * The series ends when a player cannot fill a single pit.
    */
   multiRound: boolean;
+  /**
+   * Residual seed(s) at match end: unclaimed (default) or to last mover.
+   * Applies in single matches and multi-round board ends.
+   */
+  residual: ResidualMode;
   /**
    * Bead travel speed 1 (slowest) … 10 (fastest).
    * Applies to in-game sowing and the tour demos.
@@ -30,6 +39,7 @@ export const DEFAULT_SETTINGS: Settings = {
   initialSeedsPerPit: 5,
   directionMode: 'bidirectional',
   multiRound: false,
+  residual: 'unclaimed',
   travelSpeed: TRAVEL_SPEED_DEFAULT,
   soundEnabled: true,
   // Off by default — seven glowing legal rings on every turn is noisy.
@@ -62,6 +72,10 @@ function coerce(partial: Record<string, unknown>): Settings {
       typeof partial.multiRound === 'boolean'
         ? partial.multiRound
         : DEFAULT_SETTINGS.multiRound,
+    residual:
+      partial.residual === 'to-last-mover' || partial.residual === 'unclaimed'
+        ? partial.residual
+        : DEFAULT_SETTINGS.residual,
     soundEnabled:
       typeof partial.soundEnabled === 'boolean'
         ? partial.soundEnabled

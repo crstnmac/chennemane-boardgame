@@ -125,4 +125,46 @@ describe('multi-round reseed (docs Appendix E)', () => {
     expect(events.some((e) => e.type === 'matchEnd')).toBe(true);
     expect(final.seriesOver).toBe(true);
   });
+
+  it('series-end still credits to-last-mover residual into final scores', () => {
+    // S cannot field (3 < 5). One residual seed; last mover was S (toMove already N).
+    const pits = Array(14).fill(0);
+    pits[2] = 1;
+    const state = roundEndState({
+      pits,
+      score: { S: 3, N: 66, E: 0 },
+      toMove: 'N',
+      config: mergeConfig({
+        ...MULTI,
+        residual: 'to-last-mover',
+        initialSeedsPerPit: 5,
+      }),
+    });
+    expect(tryAdvanceMultiRound(state)).toBeNull();
+    const { state: final, events } = appendMatchEndIfTerminal(state, []);
+    expect(final.seriesOver).toBe(true);
+    expect(final.pits.every((n) => n === 0)).toBe(true);
+    // Residual 1 goes to S (previous of N)
+    expect(final.score.S).toBe(4);
+    expect(final.score.N).toBe(66);
+    const end = events.find((e) => e.type === 'matchEnd');
+    expect(end && 'scores' in end ? end.scores.S : null).toBe(4);
+    expect(getWinner(final)).toBe('N');
+  });
+
+  it('series-end unclaimed residual drops from conservation', () => {
+    const pits = Array(14).fill(0);
+    pits[2] = 1;
+    const state = roundEndState({
+      pits,
+      score: { S: 3, N: 66, E: 0 },
+      // initialTotal 70 via roundEndState helper
+    });
+    expect(state.config.residual).toBe('unclaimed');
+    const { state: final } = appendMatchEndIfTerminal(state, []);
+    expect(final.score.S).toBe(3);
+    expect(final.score.N).toBe(66);
+    expect(final.pits.every((n) => n === 0)).toBe(true);
+    expect(final.initialTotal).toBe(69);
+  });
 });

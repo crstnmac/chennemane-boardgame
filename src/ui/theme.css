@@ -65,16 +65,20 @@
   --seed: var(--seed-a);
   --seed-rim: var(--seed-b);
 
-  /* Sharp geometry — premium ancient HUDs use plates, not soft pills */
-  --radius-sm: 0;
-  --radius: 0;
-  --radius-lg: 0;
-  --radius-xl: 0;
+  /* Soft premium radii — toast / sheet language */
+  --radius-sm: 0.55rem;
+  --radius: 0.75rem;
+  --radius-lg: 0.9rem;
+  --radius-xl: 1.1rem;
 
   --shadow-deep: 0 16px 40px rgba(0, 0, 0, 0.5);
+  --shadow-toast:
+    0 1px 0 rgba(255, 230, 190, 0.1),
+    0 8px 28px rgba(0, 0, 0, 0.45),
+    0 2px 8px rgba(0, 0, 0, 0.3);
   --shadow-glow: 0 0 32px rgba(168, 132, 60, 0.06);
   --shadow-inset:
-    inset 0 1px 0 rgba(255, 230, 190, 0.06),
+    inset 0 1px 0 rgba(255, 230, 190, 0.08),
     inset 0 -1px 0 rgba(0, 0, 0, 0.35);
 
   color-scheme: dark;

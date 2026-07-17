@@ -34,4 +34,35 @@ describe('AI search', () => {
     }
     expect(true).toBe(true);
   });
+
+  it('cancelled search still returns a legal move (keeps last complete depth)', () => {
+    const state = createGame(undefined, { firstPlayer: 'S', rng: () => 0 });
+    const legal = getLegalMoves(state);
+    // Cancel immediately: no depth commits; fallback is first legal move.
+    const move = search(state, {
+      difficulty: 'medium',
+      cancelled: () => true,
+    });
+    expect(
+      legal.some((m) => m.startPit === move.startPit && m.direction === move.direction),
+    ).toBe(true);
+  });
+
+  it('medium search returns a legal move on the start position', () => {
+    const state = createGame(undefined, { firstPlayer: 'S', rng: () => 0 });
+    const legal = getLegalMoves(state);
+    const move = search(state, { difficulty: 'medium' });
+    expect(
+      legal.some((m) => m.startPit === move.startPit && m.direction === move.direction),
+    ).toBe(true);
+  });
+
+  it('hard search returns a legal move on the start position', () => {
+    const state = createGame(undefined, { firstPlayer: 'S', rng: () => 0 });
+    const legal = getLegalMoves(state);
+    const move = search(state, { difficulty: 'hard' });
+    expect(
+      legal.some((m) => m.startPit === move.startPit && m.direction === move.direction),
+    ).toBe(true);
+  });
 });

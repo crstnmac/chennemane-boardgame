@@ -1,4 +1,10 @@
-import { getWinner, isTerminal, type GameState, type PlayerId } from '../engine';
+import {
+  getWinner,
+  isTerminal,
+  type GameState,
+  type MatchEndReason,
+  type PlayerId,
+} from '../engine';
 
 export type GameMode = 'hotseat' | 'ai';
 
@@ -8,6 +14,8 @@ export type MatchOutcome =
       kind: 'draw';
       title: string;
       reason: 'score' | 'resign';
+      endReason: MatchEndReason;
+      endReasonCopy: string;
       scores: Record<PlayerId, number>;
       southLabel: string;
       northLabel: string;
@@ -17,6 +25,8 @@ export type MatchOutcome =
       title: string;
       winner: PlayerId;
       reason: 'score' | 'resign';
+      endReason: MatchEndReason;
+      endReasonCopy: string;
       scores: Record<PlayerId, number>;
       southLabel: string;
       northLabel: string;
@@ -43,12 +53,37 @@ export function sideLabel(
   return playerLabel(side, mode, human);
 }
 
+export function matchEndReasonCopy(reason: MatchEndReason): string {
+  switch (reason) {
+    case 'resign':
+      return 'Ended by resignation.';
+    case 'empty-board':
+      return 'The board is empty.';
+    case 'residual':
+      return 'One seed left — unclaimed residual ends the match.';
+    case 'deadlock':
+      return 'No captures for too long — stalemate fuse ends the match.';
+    case 'empty-side':
+      return 'A side had no legal moves.';
+    case 'series-end':
+      return 'A player could not reseed the next round.';
+    case 'score':
+    default:
+      return 'Higher score wins.';
+  }
+}
+
 /**
  * Pure presentation model for the end-of-match card and status line.
+ * Pass `endReason` from the last matchEnd event when available (authoritative).
  */
 export function matchOutcome(
   state: GameState,
-  meta: { mode: GameMode; humanPlayer: PlayerId },
+  meta: {
+    mode: GameMode;
+    humanPlayer: PlayerId;
+    endReason?: MatchEndReason | null;
+  },
 ): MatchOutcome {
   if (!isTerminal(state)) return { kind: 'ongoing' };
 
@@ -56,6 +91,15 @@ export function matchOutcome(
   if (winner === null) return { kind: 'ongoing' };
 
   const reason: 'score' | 'resign' = state.resigned !== null ? 'resign' : 'score';
+  const endReason: MatchEndReason =
+    meta.endReason ??
+    (state.resigned !== null
+      ? 'resign'
+      : state.config.matchStructure === 'multi-round-protected' && state.seriesOver
+        ? 'series-end'
+        : 'score');
+  const endReasonCopy = matchEndReasonCopy(endReason);
+
   const scores = { ...state.score };
   const southLabel = sideLabel('S', meta.mode, meta.humanPlayer);
   const northLabel = sideLabel('N', meta.mode, meta.humanPlayer);
@@ -65,6 +109,8 @@ export function matchOutcome(
       kind: 'draw',
       title: 'Draw',
       reason,
+      endReason,
+      endReasonCopy,
       scores,
       southLabel,
       northLabel,
@@ -98,6 +144,8 @@ export function matchOutcome(
     title,
     winner,
     reason,
+    endReason,
+    endReasonCopy,
     scores,
     southLabel,
     northLabel,
@@ -107,8 +155,5 @@ export function matchOutcome(
 
 export function outcomeStatusDetail(outcome: MatchOutcome): string {
   if (outcome.kind === 'ongoing') return '';
-  if (outcome.kind === 'draw') {
-    return `${outcome.southLabel} ${outcome.scores.S} — ${outcome.northLabel} ${outcome.scores.N}`;
-  }
-  return `${outcome.southLabel} ${outcome.scores.S} — ${outcome.northLabel} ${outcome.scores.N}`;
+  return `${outcome.endReasonCopy} ${outcome.southLabel} ${outcome.scores.S} — ${outcome.northLabel} ${outcome.scores.N}`;
 }

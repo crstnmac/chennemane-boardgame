@@ -1,7 +1,11 @@
 import { nextPlayer } from './board';
 import { hasLegalMove } from './moves';
 import { getWinner, isTerminal } from './terminal';
-import { tryAdvanceMultiRound } from './multiRound';
+import {
+  classifyMatchEndReason,
+  settleResidualSeeds,
+  tryAdvanceMultiRound,
+} from './multiRound';
 import type { GameState, MoveEvent, PlayerId } from './types';
 
 /** True when the current player must/may take a second sowing. */
@@ -53,15 +57,40 @@ export function appendMatchEndIfTerminal(
   }
 
   if (!isTerminal(state)) return { state, events };
-  const winner = getWinner(state);
+
+  // Classify before residual settle mutates pits (needs seed counts / deadlock).
+  let reason = classifyMatchEndReason(state);
+  let finalState = state;
+  if (state.resigned === null) {
+    const boardSeeds = state.pits.reduce((a, b) => a + b, 0);
+    if (boardSeeds > 0) {
+      finalState = settleResidualSeeds(state);
+      // Multi-round board end that could not reseed → series-end for UI copy.
+      if (
+        state.config.matchStructure === 'multi-round-protected' &&
+        !state.seriesOver &&
+        reason !== 'resign'
+      ) {
+        // tryAdvance already returned null to reach here
+        reason = 'series-end';
+      }
+    }
+  }
+
+  const winner = getWinner(finalState);
   if (winner === null) {
     throw new Error('appendMatchEndIfTerminal: terminal state without winner');
   }
   return {
-    state: { ...state, seriesOver: true },
+    state: { ...finalState, seriesOver: true },
     events: [
       ...events,
-      { type: 'matchEnd', winner, scores: { ...state.score } },
+      {
+        type: 'matchEnd',
+        winner,
+        scores: { ...finalState.score },
+        reason,
+      },
     ],
   };
 }
@@ -123,13 +152,16 @@ export function afterSowing(
     );
   }
 
-  // Second sowing always ends the turn
+  // Second sowing always ends the turn.
+  // You only reach sowingsUsedThisTurn === 1 after a capture this turn, so
+  // the turn made progress even if *this* sowing captured nothing — always
+  // clear the deadlock counter (same as applySkipSecond).
   const withEnd: MoveEvent[] = [
     ...events,
     { type: 'turnEnd', player, reason: 'second-saada' },
   ];
   return appendMatchEndIfTerminal(
-    endTurnSwitch({ ...s, quietTurns: quietAfterEnd }),
+    endTurnSwitch({ ...s, quietTurns: 0 }),
     withEnd,
   );
 }
