@@ -26,6 +26,11 @@ export function GameScreen() {
   const thinking = useGameStore((s) => s.thinking);
   const hintsEnabled = useGameStore((s) => s.hintsEnabled);
   const aiDifficulty = useGameStore((s) => s.aiDifficulty);
+  const p2pRoomCode = useGameStore((s) => s.p2pRoomCode);
+  const p2pConnected = useGameStore((s) => s.p2pConnected);
+  const p2pReconnecting = useGameStore((s) => s.p2pReconnecting);
+  const p2pLocalName = useGameStore((s) => s.p2pLocalName);
+  const p2pRemoteName = useGameStore((s) => s.p2pRemoteName);
   const travelSpeed = useGameStore((s) => s.settings.travelSpeed);
   const displayHand = useGameStore((s) => s.displayHand);
   const lastMatchEndReason = useGameStore((s) => s.lastMatchEndReason);
@@ -39,6 +44,8 @@ export function GameScreen() {
   const toggleHints = useGameStore((s) => s.toggleHints);
   const setScreen = useGameStore((s) => s.setScreen);
   const newGame = useGameStore((s) => s.newGame);
+  const leaveP2P = useGameStore((s) => s.leaveP2P);
+  const reconnectP2P = useGameStore((s) => s.reconnectP2P);
   const dismissResult = useGameStore((s) => s.dismissResult);
 
   const [leaveOpen, setLeaveOpen] = useState(false);
@@ -113,6 +120,24 @@ export function GameScreen() {
   }, [menuOpen]);
 
   if (!committed) {
+    if (mode === 'p2p') {
+      return (
+        <div className="play-empty">
+          <p>Connecting to P2P room…</p>
+          {p2pRoomCode && <p className="play-empty-code">{p2pRoomCode}</p>}
+          <p className="play-empty-sub">
+            {p2pConnected
+              ? 'Syncing board…'
+              : p2pReconnecting
+                ? 'Reconnecting…'
+                : 'Looking for opponent…'}
+          </p>
+          <button type="button" className="btn btn-ghost" onClick={() => void leaveP2P()}>
+            Cancel
+          </button>
+        </div>
+      );
+    }
     return (
       <div className="play-empty">
         <p>No active game.</p>
@@ -128,12 +153,14 @@ export function GameScreen() {
     mode,
     humanPlayer,
     endReason: lastMatchEndReason,
+    names: { local: p2pLocalName, remote: p2pRemoteName },
   });
   const aiPhase =
     turnPhase === 'ai-thinking' ||
     turnPhase === 'ai-preview' ||
     turnPhase === 'ai-playing';
-  const yourTurn = turnPhase === 'your-turn' && mode === 'ai';
+  const yourTurn =
+    turnPhase === 'your-turn' && (mode === 'ai' || mode === 'p2p');
   // Only enable Skip while an animation / AI sow is actually running.
   const animRunning =
     inputLocked ||
@@ -149,22 +176,28 @@ export function GameScreen() {
     !terminal &&
     (turnPhase === 'your-turn' || turnPhase === 'hotseat-turn');
 
-  const northIsYou = mode === 'ai' && humanPlayer === 'N';
-  const southIsYou = mode === 'ai' && humanPlayer === 'S';
+  const northIsYou =
+    (mode === 'ai' || mode === 'p2p') && humanPlayer === 'N';
+  const southIsYou =
+    (mode === 'ai' || mode === 'p2p') && humanPlayer === 'S';
+  const opponentPhase =
+    mode === 'p2p' && !yourTurn && !terminal && turnPhase !== 'animating';
   const northActive =
     !terminal &&
     ((mode === 'ai' && humanPlayer === 'S' && aiPhase) ||
       (mode === 'ai' && humanPlayer === 'N' && yourTurn) ||
-      (mode !== 'ai' && committed.toMove === 'N'));
+      (mode === 'p2p' && committed.toMove === 'N') ||
+      (mode === 'hotseat' && committed.toMove === 'N'));
   const southActive =
     !terminal &&
     ((mode === 'ai' && humanPlayer === 'S' && yourTurn) ||
       (mode === 'ai' && humanPlayer === 'N' && aiPhase) ||
-      (mode !== 'ai' && committed.toMove === 'S'));
+      (mode === 'p2p' && committed.toMove === 'S') ||
+      (mode === 'hotseat' && committed.toMove === 'S'));
 
   const statusTone = forcedSecond
     ? 'second'
-    : aiPhase
+    : aiPhase || opponentPhase
       ? 'ai'
       : yourTurn
         ? 'you'
@@ -173,20 +206,31 @@ export function GameScreen() {
           : 'neutral';
 
   const northLabel = northIsYou
-    ? 'You · A'
+    ? `${mode === 'p2p' ? p2pLocalName || 'You' : 'You'} · A`
     : mode === 'ai'
       ? 'AI · A'
-      : 'North · A';
+      : mode === 'p2p'
+        ? `${p2pRemoteName || 'Opponent'} · A`
+        : 'North · A';
   const southLabel = southIsYou
-    ? 'You · B'
+    ? `${mode === 'p2p' ? p2pLocalName || 'You' : 'You'} · B`
     : mode === 'ai'
       ? 'AI · B'
-      : 'South · B';
+      : mode === 'p2p'
+        ? `${p2pRemoteName || 'Opponent'} · B`
+        : 'South · B';
 
-  const midMatch = !terminal && historyPast.length > 0;
+  const midMatch = !terminal && (historyPast.length > 0 || mode === 'p2p');
 
   const requestLeave = () => {
     if (midMatch) setLeaveOpen(true);
+    else if (mode === 'p2p') void leaveP2P();
+    else setScreen('home');
+  };
+
+  const confirmLeave = () => {
+    setLeaveOpen(false);
+    if (mode === 'p2p') void leaveP2P();
     else setScreen('home');
   };
 
@@ -199,9 +243,15 @@ export function GameScreen() {
       : 'Choose a pit, then a direction'
     : aiPhase
       ? 'Opponent is sowing'
-      : mode === 'hotseat'
-        ? `${committed.toMove === 'S' ? 'South' : 'North'} to move`
-        : 'Orbit · zoom · tap a pit';
+      : mode === 'p2p'
+        ? p2pConnected
+          ? `${p2pRemoteName || 'Opponent'}'s turn`
+          : p2pReconnecting
+            ? `Reconnecting to room ${p2pRoomCode || '—'}…`
+            : `Room ${p2pRoomCode || '—'} · waiting for peer`
+        : mode === 'hotseat'
+          ? `${committed.toMove === 'S' ? 'South' : 'North'} to move`
+          : 'Orbit · zoom · tap a pit';
 
   return (
     <div className="play-screen">
@@ -237,7 +287,19 @@ export function GameScreen() {
           <div className="hud-meta">
             <span className="hud-meta-title">Ali Guli Mane</span>
             <span className="hud-meta-sub">
-              {mode === 'ai' ? `AI · ${aiDifficulty}` : 'Local'}
+              {mode === 'ai'
+                ? `AI · ${aiDifficulty}`
+                : mode === 'p2p'
+                  ? `P2P · ${p2pRoomCode || '…'}${
+                      p2pConnected
+                        ? p2pRemoteName
+                          ? ` · vs ${p2pRemoteName}`
+                          : ''
+                        : p2pReconnecting
+                          ? ' · reconnecting'
+                          : ' · disconnected'
+                    }`
+                  : 'Local'}
               {committed.config.matchStructure === 'multi-round-protected'
                 ? ` · Round ${displayRound + 1}`
                 : ''}
@@ -251,9 +313,9 @@ export function GameScreen() {
             type="button"
             className="hud-icon"
             onClick={undo}
-            disabled={historyPast.length === 0}
+            disabled={mode === 'p2p' || historyPast.length === 0}
             aria-label="Undo"
-            title="Undo"
+            title={mode === 'p2p' ? 'Undo disabled online' : 'Undo'}
           >
             ↩
           </button>
@@ -261,9 +323,9 @@ export function GameScreen() {
             type="button"
             className="hud-icon"
             onClick={redo}
-            disabled={historyFuture.length === 0}
+            disabled={mode === 'p2p' || historyFuture.length === 0}
             aria-label="Redo"
-            title="Redo"
+            title={mode === 'p2p' ? 'Redo disabled online' : 'Redo'}
           >
             ↪
           </button>
@@ -384,16 +446,35 @@ export function GameScreen() {
         </div>
 
         <div
-          className={`hud-objective tone-${statusTone}`}
+          className={`hud-objective tone-${statusTone}${
+            mode === 'p2p' && !p2pConnected ? ' tone-pass' : ''
+          }`}
           role="status"
           aria-live="polite"
         >
-          {(turnPhase === 'ai-thinking' || thinking) && (
+          {(turnPhase === 'ai-thinking' || thinking || p2pReconnecting) && (
             <span className="hud-objective-pulse" aria-hidden />
           )}
           <p className="hud-objective-main">{statusMessage || 'Play'}</p>
           {(statusDetail || contextHint) && (
             <p className="hud-objective-sub">{statusDetail || contextHint}</p>
+          )}
+          {mode === 'p2p' && !p2pConnected && !terminal && (
+            <div className="hud-reconnect">
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                disabled={p2pReconnecting}
+                onClick={() => void reconnectP2P()}
+              >
+                {p2pReconnecting ? 'Reconnecting…' : 'Reconnect now'}
+              </button>
+              <p className="hud-reconnect-hint">
+                {humanPlayer === 'S'
+                  ? 'You are the host — stay here; they rejoin with the same room code.'
+                  : 'Guest will auto-retry; use the button to try immediately.'}
+              </p>
+            </div>
           )}
         </div>
       </div>
@@ -514,10 +595,7 @@ export function GameScreen() {
               <button
                 type="button"
                 className="btn btn-danger"
-                onClick={() => {
-                  setLeaveOpen(false);
-                  setScreen('home');
-                }}
+                onClick={confirmLeave}
               >
                 Leave
               </button>
@@ -588,6 +666,10 @@ export function GameScreen() {
           }}
           onPlayAgain={() => {
             dismissResult();
+            if (mode === 'p2p') {
+              void leaveP2P();
+              return;
+            }
             newGame(mode, {
               difficulty: aiDifficulty,
               human: humanPlayer,
@@ -595,7 +677,8 @@ export function GameScreen() {
           }}
           onHome={() => {
             dismissResult();
-            setScreen('home');
+            if (mode === 'p2p') void leaveP2P();
+            else setScreen('home');
           }}
         />
       )}

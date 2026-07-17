@@ -861,18 +861,36 @@ const PitHitTarget = memo(function PitHitTarget({
 
 function RowMarkers() {
   // A = North (far, −Z in Three), B = South (near, +Z)
+  const mode = useGameStore((s) => s.mode);
+  const humanPlayer = useGameStore((s) => s.humanPlayer);
+  const p2pLocalName = useGameStore((s) => s.p2pLocalName);
+  const p2pRemoteName = useGameStore((s) => s.p2pRemoteName);
+
+  const northSub =
+    mode === 'p2p'
+      ? humanPlayer === 'N'
+        ? `${p2pLocalName || 'You'} · far`
+        : `${p2pRemoteName || 'Opponent'} · far`
+      : mode === 'ai'
+        ? humanPlayer === 'N'
+          ? 'You · far'
+          : 'AI · far'
+        : 'North · far';
+  const southSub =
+    mode === 'p2p'
+      ? humanPlayer === 'S'
+        ? `${p2pLocalName || 'You'} · near`
+        : `${p2pRemoteName || 'Opponent'} · near`
+      : mode === 'ai'
+        ? humanPlayer === 'S'
+          ? 'You · near'
+          : 'AI · near'
+        : 'South · near';
+
   return (
     <>
-      <RowInitialMarker
-        row="A"
-        position={[-0.62, 0.06, -0.09]}
-        subtitle="North · far"
-      />
-      <RowInitialMarker
-        row="B"
-        position={[-0.62, 0.06, 0.09]}
-        subtitle="South · near"
-      />
+      <RowInitialMarker row="A" position={[-0.62, 0.06, -0.09]} subtitle={northSub} />
+      <RowInitialMarker row="B" position={[-0.62, 0.06, 0.09]} subtitle={southSub} />
     </>
   );
 }
@@ -1112,19 +1130,29 @@ function CoconutLayer() {
   const lastCaptureSide = useGameStore((s) => s.lastCaptureSide);
   const mode = useGameStore((s) => s.mode);
   const humanPlayer = useGameStore((s) => s.humanPlayer);
+  const p2pLocalName = useGameStore((s) => s.p2pLocalName);
+  const p2pRemoteName = useGameStore((s) => s.p2pRemoteName);
 
   const southTitle =
     mode === 'ai' && humanPlayer === 'S'
       ? 'You · B'
       : mode === 'ai'
         ? 'AI · B'
-        : 'South · B';
+        : mode === 'p2p'
+          ? humanPlayer === 'S'
+            ? `${p2pLocalName || 'You'} · B`
+            : `${p2pRemoteName || 'Opponent'} · B`
+          : 'South · B';
   const northTitle =
     mode === 'ai' && humanPlayer === 'N'
       ? 'You · A'
       : mode === 'ai'
         ? 'AI · A'
-        : 'North · A';
+        : mode === 'p2p'
+          ? humanPlayer === 'N'
+            ? `${p2pLocalName || 'You'} · A`
+            : `${p2pRemoteName || 'Opponent'} · A`
+          : 'North · A';
 
   return (
     <CoconutStores

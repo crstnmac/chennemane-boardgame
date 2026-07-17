@@ -4,32 +4,50 @@
  * Touch devices overwhelmingly pair high-density screens with much weaker
  * GPUs than desktops, so a coarse pointer is the signal that matters here —
  * it costs nothing and needs no user-agent sniffing.
+ *
+ * Electron (Pear desktop) is also treated as memory-sensitive: it already runs
+ * Chromium + a Bare/Hyperswarm worker, so we prefer mobile-tier assets and
+ * lower DPR to cut VRAM / RSS substantially (board.glb 6MB → ~1.2MB mobile).
  */
 const coarsePointer =
   typeof window !== 'undefined' &&
   typeof window.matchMedia === 'function' &&
   window.matchMedia('(pointer: coarse)').matches;
 
+const isElectronShell =
+  typeof window !== 'undefined' &&
+  Boolean(
+    (window as Window & { bridge?: { startWorker?: unknown } }).bridge?.startWorker,
+  );
+
+const deviceMemory =
+  typeof navigator !== 'undefined'
+    ? ((navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 8)
+    : 8;
+
 export const IS_MOBILE = coarsePointer;
+
+/** Prefer 512px textures + .mobile.glb (and lower IBL) when RAM/process budget is tight. */
+export const USE_COMPACT_ASSETS =
+  coarsePointer || isElectronShell || deviceMemory <= 4;
 
 /** Extra-constrained devices: few cores and (where reported) little RAM. */
 export const IS_LOW_POWER =
-  IS_MOBILE &&
-  ((navigator.hardwareConcurrency ?? 8) <= 4 ||
-    ((navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 8) <= 4);
+  (IS_MOBILE || isElectronShell) &&
+  ((navigator.hardwareConcurrency ?? 8) <= 4 || deviceMemory <= 4);
 
 /** Canvas dpr range for the main play board. */
-export const BOARD_DPR: [number, number] = IS_MOBILE ? [1, 1.25] : [1, 1.5];
+export const BOARD_DPR: [number, number] = USE_COMPACT_ASSETS ? [1, 1.25] : [1, 1.5];
 
 /** Canvas dpr range for decorative scenes (home hero, tour). */
-export const HERO_DPR: [number, number] = IS_MOBILE ? [1, 1.15] : [1, 1.5];
+export const HERO_DPR: [number, number] = USE_COMPACT_ASSETS ? [1, 1.15] : [1, 1.5];
 
 /** Anisotropic filtering taps — each tap costs texture bandwidth on mobile GPUs. */
-export const TEXTURE_ANISOTROPY = IS_MOBILE ? 2 : 4;
-export const ROOM_TEXTURE_ANISOTROPY = IS_MOBILE ? 2 : 8;
+export const TEXTURE_ANISOTROPY = USE_COMPACT_ASSETS ? 2 : 4;
+export const ROOM_TEXTURE_ANISOTROPY = USE_COMPACT_ASSETS ? 2 : 4;
 
 /** Blurred contact-shadow render target — quarter the pixels on mobile. */
-export const CONTACT_SHADOW_RESOLUTION = IS_MOBILE ? 128 : 256;
+export const CONTACT_SHADOW_RESOLUTION = USE_COMPACT_ASSETS ? 128 : 256;
 
 /*
  * Flying-bead legibility. On phones the board is small and the elevated
@@ -48,11 +66,11 @@ export const FLYER_SCALE_BOOST = IS_MOBILE ? 1.45 : 1;
  */
 
 export function textureUrl(url: string): string {
-  return IS_MOBILE
+  return USE_COMPACT_ASSETS
     ? url.replace('/textures/', '/textures-mobile/').replace('/hdr/', '/hdr-mobile/')
     : url;
 }
 
 export function modelUrl(url: string): string {
-  return IS_MOBILE ? url.replace('.glb', '.mobile.glb') : url;
+  return USE_COMPACT_ASSETS ? url.replace('.glb', '.mobile.glb') : url;
 }

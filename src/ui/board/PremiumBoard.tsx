@@ -182,6 +182,8 @@ export function PremiumBoard() {
   const thinking = useGameStore((s) => s.thinking);
   const mode = useGameStore((s) => s.mode);
   const humanPlayer = useGameStore((s) => s.humanPlayer);
+  const p2pLocalName = useGameStore((s) => s.p2pLocalName);
+  const p2pRemoteName = useGameStore((s) => s.p2pRemoteName);
   const selectPit = useGameStore((s) => s.selectPit);
   const pendingDirection = useGameStore((s) => s.pendingDirection);
   const statusMessage = useGameStore((s) => s.statusMessage);
@@ -420,7 +422,15 @@ export function PremiumBoard() {
         <div className="board-vignette" aria-hidden />
 
         <div className="board-row-label north-label">
-          {mode === 'ai' ? (humanPlayer === 'N' ? 'You' : 'Opponent') : 'North'}
+          {mode === 'ai'
+            ? humanPlayer === 'N'
+              ? 'You'
+              : 'Opponent'
+            : mode === 'p2p'
+              ? humanPlayer === 'N'
+                ? p2pLocalName || 'You'
+                : p2pRemoteName || 'Opponent'
+              : 'North'}
         </div>
 
         <div className={`pit-row north ${northActive ? 'row-active' : ''}`}>
@@ -478,7 +488,15 @@ export function PremiumBoard() {
         </div>
 
         <div className="board-row-label south-label">
-          {mode === 'ai' ? (humanPlayer === 'S' ? 'You' : 'Opponent') : 'South'}
+          {mode === 'ai'
+            ? humanPlayer === 'S'
+              ? 'You'
+              : 'Opponent'
+            : mode === 'p2p'
+              ? humanPlayer === 'S'
+                ? p2pLocalName || 'You'
+                : p2pRemoteName || 'Opponent'
+              : 'South'}
         </div>
 
         {/* Flying seed during sow */}

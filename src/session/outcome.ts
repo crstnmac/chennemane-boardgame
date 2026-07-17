@@ -6,7 +6,7 @@ import {
   type PlayerId,
 } from '../engine';
 
-export type GameMode = 'hotseat' | 'ai';
+export type GameMode = 'hotseat' | 'ai' | 'p2p';
 
 export type MatchOutcome =
   | { kind: 'ongoing' }
@@ -34,13 +34,27 @@ export type MatchOutcome =
       humanResult: 'win' | 'loss' | null;
     };
 
+export type PlayerNames = {
+  local?: string | null;
+  remote?: string | null;
+};
+
 export function playerLabel(
   player: PlayerId,
   mode: GameMode,
   human: PlayerId,
+  names?: PlayerNames,
 ): string {
   if (mode === 'ai') {
     return player === human ? 'You' : 'AI';
+  }
+  if (mode === 'p2p') {
+    if (player === human) {
+      const n = names?.local?.trim();
+      return n ? n : 'You';
+    }
+    const r = names?.remote?.trim();
+    return r ? r : 'Opponent';
   }
   return player === 'S' ? 'South' : 'North';
 }
@@ -49,8 +63,9 @@ export function sideLabel(
   side: PlayerId,
   mode: GameMode,
   human: PlayerId,
+  names?: PlayerNames,
 ): string {
-  return playerLabel(side, mode, human);
+  return playerLabel(side, mode, human, names);
 }
 
 export function matchEndReasonCopy(reason: MatchEndReason): string {
@@ -83,6 +98,8 @@ export function matchOutcome(
     mode: GameMode;
     humanPlayer: PlayerId;
     endReason?: MatchEndReason | null;
+    /** P2P display names (local = this client, remote = opponent). */
+    names?: PlayerNames;
   },
 ): MatchOutcome {
   if (!isTerminal(state)) return { kind: 'ongoing' };
@@ -101,8 +118,16 @@ export function matchOutcome(
   const endReasonCopy = matchEndReasonCopy(endReason);
 
   const scores = { ...state.score };
-  const southLabel = sideLabel('S', meta.mode, meta.humanPlayer);
-  const northLabel = sideLabel('N', meta.mode, meta.humanPlayer);
+  const names = meta.names;
+  const southLabel = sideLabel('S', meta.mode, meta.humanPlayer, names);
+  const northLabel = sideLabel('N', meta.mode, meta.humanPlayer, names);
+  const localLabel = playerLabel(meta.humanPlayer, meta.mode, meta.humanPlayer, names);
+  const remoteLabel = playerLabel(
+    meta.humanPlayer === 'S' ? 'N' : 'S',
+    meta.mode,
+    meta.humanPlayer,
+    names,
+  );
 
   if (winner === 'draw') {
     return {
@@ -128,12 +153,24 @@ export function matchOutcome(
       title = 'AI wins';
       humanResult = 'loss';
     }
+  } else if (meta.mode === 'p2p') {
+    if (winner === meta.humanPlayer) {
+      title = `${localLabel} wins`;
+      humanResult = 'win';
+    } else {
+      title = `${remoteLabel} wins`;
+      humanResult = 'loss';
+    }
   } else {
     title = `${winner === 'S' ? 'South' : 'North'} wins`;
   }
 
   if (reason === 'resign' && meta.mode === 'ai' && state.resigned === meta.humanPlayer) {
     title = 'You resigned';
+  } else if (reason === 'resign' && meta.mode === 'p2p' && state.resigned === meta.humanPlayer) {
+    title = `${localLabel} resigned`;
+  } else if (reason === 'resign' && meta.mode === 'p2p') {
+    title = `${remoteLabel} resigned`;
   } else if (reason === 'resign' && meta.mode === 'hotseat') {
     const loser = state.resigned!;
     title = `${loser === 'S' ? 'South' : 'North'} resigned`;

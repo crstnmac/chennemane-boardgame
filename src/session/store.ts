@@ -34,9 +34,32 @@ import {
   playerLabel,
   type GameMode,
 } from './outcome';
+import {
+  isP2PAvailable,
+  isValidGameState,
+  onP2PError,
+  onP2PGame,
+  onP2PMatchReady,
+  onP2PReject,
+  onP2PStatus,
+  p2pDestroy,
+  p2pHost,
+  p2pJoin,
+  p2pPlay,
+  p2pReconnect,
+  p2pSnapshot,
+  sanitizePlayerName,
+  type P2PGamePayload,
+} from './p2p';
 
 export type Screen = 'home' | 'game' | 'rules' | 'settings' | 'coach';
 export type { GameMode };
+export type P2PLobbyStatus =
+  | 'idle'
+  | 'connecting'
+  | 'hosting'
+  | 'joining'
+  | 'error';
 export type TurnPhase =
   | 'your-turn'
   | 'hotseat-turn'
@@ -73,6 +96,60 @@ export interface CaptureFlight {
 let captureFlightSeq = 0;
 
 const HISTORY_CAP = 200;
+
+/** Shared empty board buffers for P2P/open — avoid per-update allocations. */
+const EMPTY_PITS14: number[] = Object.freeze(Array(14).fill(0)) as number[];
+const EMPTY_PROTECTED14: boolean[] = Object.freeze(Array(14).fill(false)) as boolean[];
+const EMPTY_SCORE = Object.freeze({ S: 0, N: 0, E: 0 }) as Record<PlayerId, number>;
+
+const P2P_NAME_KEY = 'chennamane-p2p-player-name';
+
+function loadP2PPlayerName(): string {
+  try {
+    return sanitizePlayerName(localStorage.getItem(P2P_NAME_KEY));
+  } catch {
+    return 'Player';
+  }
+}
+
+function saveP2PPlayerName(name: string) {
+  try {
+    localStorage.setItem(P2P_NAME_KEY, sanitizePlayerName(name));
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Prefer a real nickname over wire defaults / empty echoes. */
+function preferPlayerName(
+  wire: string | null | undefined,
+  current: string | null | undefined,
+): string {
+  const cur = (current || '').trim();
+  if (cur && cur !== 'Player') return cur;
+  const w = (wire || '').trim();
+  if (w) return w;
+  return cur || 'Player';
+}
+
+function outcomeMeta(session: {
+  mode: GameMode;
+  humanPlayer: PlayerId;
+  p2pLocalName?: string;
+  p2pRemoteName?: string | null;
+  lastMatchEndReason?: MatchEndReason | null;
+  endReason?: MatchEndReason | null;
+}) {
+  return {
+    mode: session.mode,
+    humanPlayer: session.humanPlayer,
+    endReason: session.endReason ?? session.lastMatchEndReason ?? null,
+    names: {
+      local: session.p2pLocalName,
+      remote: session.p2pRemoteName,
+    },
+  };
+}
 
 /** Minimum time the "AI is thinking" state stays visible (ms). */
 const AI_MIN_THINK_MS: Record<Difficulty, number> = {
@@ -154,6 +231,20 @@ export interface GameSession {
   previewPits: PitIndex[];
   previewKind: 'none' | 'path' | 'saada' | 'capture';
 
+  /** Pear desktop P2P */
+  p2pAvailable: boolean;
+  p2pRoomCode: string | null;
+  p2pConnected: boolean;
+  p2pLobbyStatus: P2PLobbyStatus;
+  p2pLobbyMessage: string;
+  p2pSeq: number;
+  /** Local display name for P2P */
+  p2pLocalName: string;
+  /** Opponent display name once joined */
+  p2pRemoteName: string | null;
+  /** True while guest auto/manual reconnect is in progress */
+  p2pReconnecting: boolean;
+
   setScreen: (s: Screen) => void;
   updateSettings: (partial: Partial<Settings>) => void;
   newGame: (
@@ -163,6 +254,13 @@ export interface GameSession {
       human?: PlayerId;
     },
   ) => void;
+  /** Host a P2P room (South). Stays in lobby until a peer joins. */
+  hostP2P: (playerName?: string) => Promise<void>;
+  /** Join a P2P room (North). Game opens when host accepts. */
+  joinP2P: (code: string, playerName?: string) => Promise<void>;
+  leaveP2P: () => Promise<void>;
+  /** Rejoin after a drop (guest dials host; host keeps listening). */
+  reconnectP2P: () => Promise<void>;
   selectPit: (pit: PitIndex) => void;
   clearSelection: () => void;
   chooseDirection: (dir: 'cw' | 'ccw') => void;
@@ -224,13 +322,18 @@ function enterMatchOver(
     endReason?: MatchEndReason | null;
   },
 ): void {
-  const endReason =
-    opts.endReason ?? useGameStore.getState().lastMatchEndReason ?? null;
-  const outcome = matchOutcome(state, {
-    mode: opts.mode,
-    humanPlayer: opts.humanPlayer,
-    endReason,
-  });
+  const cur = useGameStore.getState();
+  const endReason = opts.endReason ?? cur.lastMatchEndReason ?? null;
+  const outcome = matchOutcome(
+    state,
+    outcomeMeta({
+      mode: opts.mode,
+      humanPlayer: opts.humanPlayer,
+      endReason,
+      p2pLocalName: cur.p2pLocalName,
+      p2pRemoteName: cur.p2pRemoteName,
+    }),
+  );
   if (outcome.kind === 'ongoing') return;
 
   // Single place for the outcome sting. Skip / resolve / anim-end may all call
@@ -329,14 +432,32 @@ export const useGameStore = create<GameSession>((set, get) => ({
   lastMatchEndReason: null,
   previewPits: [],
   previewKind: 'none',
+  p2pAvailable: typeof window !== 'undefined' && isP2PAvailable(),
+  p2pRoomCode: null,
+  p2pConnected: false,
+  p2pLobbyStatus: 'idle',
+  p2pLobbyMessage: '',
+  p2pSeq: 0,
+  p2pLocalName: loadP2PPlayerName(),
+  p2pRemoteName: null,
+  p2pReconnecting: false,
 
   setScreen: (screen) => {
     // Leaving the game mid-anim/AI must cancel resolve loops so they don't
     // keep mutating state while the user is on home/rules/settings.
     if (screen !== 'game' && get().screen === 'game') {
       abortAnim();
+      const wasP2p = get().mode === 'p2p';
+      if (wasP2p) {
+        p2pQueue.length = 0;
+        clearP2PPendingTimeouts();
+        void p2pDestroy();
+      }
       set({
         screen,
+        // Reset mode so home lobby is not stuck in a half-dead p2p session
+        mode: wasP2p ? 'ai' : get().mode,
+        committed: wasP2p ? null : get().committed,
         thinking: false,
         inputLocked: false,
         pendingDirection: false,
@@ -348,6 +469,16 @@ export const useGameStore = create<GameSession>((set, get) => ({
         highlightPitsExtra: [],
         highlightKind: 'none',
         highlightDir: null,
+        lastEvents: wasP2p ? [] : get().lastEvents,
+        historyPast: wasP2p ? [] : get().historyPast,
+        historyFuture: wasP2p ? [] : get().historyFuture,
+        showResult: false,
+        p2pRoomCode: null,
+        p2pConnected: false,
+        p2pLobbyStatus: 'idle',
+        p2pLobbyMessage: '',
+        p2pSeq: 0,
+        p2pRemoteName: null,
       });
       return;
     }
@@ -442,13 +573,260 @@ export const useGameStore = create<GameSession>((set, get) => ({
     queueMicrotask(() => get().resolveLoop());
   },
 
+  hostP2P: async (playerName) => {
+    if (!isP2PAvailable()) {
+      set({
+        p2pLobbyStatus: 'error',
+        p2pLobbyMessage: 'Online multiplayer needs a modern browser (WebRTC) or the desktop app.',
+      });
+      return;
+    }
+    // Synchronous guard — React state updates are async; blocks double-click races
+    if (
+      get().p2pLobbyStatus === 'connecting' ||
+      get().p2pLobbyStatus === 'hosting' ||
+      p2pLobbyOpInFlight
+    ) {
+      return;
+    }
+    p2pLobbyOpInFlight = true;
+    ensureP2PSubscriptions();
+    const { settings } = get();
+    const name = sanitizePlayerName(playerName ?? get().p2pLocalName);
+    saveP2PPlayerName(name);
+    setSoundEnabled(settings.soundEnabled);
+    abortAnim();
+    p2pQueue.length = 0;
+    clearP2PPendingTimeouts();
+    try {
+      await p2pDestroy();
+    } catch {
+      /* ignore */
+    }
+    set({
+      p2pLobbyStatus: 'connecting',
+      p2pLobbyMessage: 'Creating room…',
+      p2pConnected: false,
+      p2pSeq: 0,
+      p2pRoomCode: null,
+      p2pLocalName: name,
+      p2pRemoteName: null,
+      screen: 'home',
+      mode: 'ai',
+      committed: null,
+    });
+    try {
+      const res = await p2pHost({
+        seeds: settings.initialSeedsPerPit,
+        directionMode: settings.directionMode,
+        firstPlayer: 'S',
+        multiRound: settings.multiRound,
+        residual: settings.residual,
+        playerName: name,
+      });
+      // Stay on home until a peer joins — do not open the board yet
+      set({
+        p2pLobbyStatus: 'hosting',
+        p2pLobbyMessage: `Room ${res.roomCode} — waiting for opponent…`,
+        p2pRoomCode: res.roomCode,
+        p2pLocalName: res.localPlayerName || name,
+        p2pRemoteName: null,
+        p2pConnected: false,
+        p2pSeq: 0,
+        humanPlayer: 'S',
+      });
+    } catch (err) {
+      set({
+        p2pLobbyStatus: 'error',
+        p2pLobbyMessage: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      p2pLobbyOpInFlight = false;
+    }
+  },
+
+  joinP2P: async (code, playerName) => {
+    if (!isP2PAvailable()) {
+      set({
+        p2pLobbyStatus: 'error',
+        p2pLobbyMessage: 'Online multiplayer needs a modern browser (WebRTC) or the desktop app.',
+      });
+      return;
+    }
+    if (
+      get().p2pLobbyStatus === 'connecting' ||
+      get().p2pLobbyStatus === 'joining' ||
+      p2pLobbyOpInFlight
+    ) {
+      return;
+    }
+    p2pLobbyOpInFlight = true;
+    ensureP2PSubscriptions();
+    const trimmed = code.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (trimmed.length < 4) {
+      p2pLobbyOpInFlight = false;
+      set({
+        p2pLobbyStatus: 'error',
+        p2pLobbyMessage: 'Enter a valid room code (4+ characters).',
+      });
+      return;
+    }
+    const name = sanitizePlayerName(playerName ?? get().p2pLocalName);
+    saveP2PPlayerName(name);
+    const { settings } = get();
+    setSoundEnabled(settings.soundEnabled);
+    abortAnim();
+    p2pQueue.length = 0;
+    clearP2PPendingTimeouts();
+    try {
+      await p2pDestroy();
+    } catch {
+      /* ignore */
+    }
+    set({
+      p2pLobbyStatus: 'connecting',
+      p2pLobbyMessage: 'Joining…',
+      p2pConnected: false,
+      p2pSeq: 0,
+      p2pRoomCode: null,
+      p2pLocalName: name,
+      p2pRemoteName: null,
+      screen: 'home',
+      mode: 'ai',
+      committed: null,
+    });
+    try {
+      const res = await p2pJoin(trimmed, name);
+      // peerLinked is set by the transport (WebRTC waits for channel; Pear does not).
+      set({
+        p2pLobbyStatus: 'joining',
+        p2pLobbyMessage: res.peerLinked
+          ? `Joined ${res.roomCode} — syncing with host…`
+          : `Joined ${res.roomCode} — looking for host…`,
+        p2pRoomCode: res.roomCode,
+        p2pLocalName: res.localPlayerName || name,
+        p2pRemoteName: null,
+        p2pConnected: res.peerLinked,
+        p2pSeq: 0,
+        humanPlayer: 'N',
+      });
+    } catch (err) {
+      set({
+        p2pLobbyStatus: 'error',
+        p2pLobbyMessage: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      p2pLobbyOpInFlight = false;
+    }
+  },
+
+  leaveP2P: async () => {
+    abortAnim();
+    p2pQueue.length = 0;
+    clearP2PPendingTimeouts();
+    try {
+      await p2pDestroy();
+    } catch {
+      /* ignore */
+    }
+    set({
+      screen: 'home',
+      mode: 'ai',
+      committed: null,
+      displayPits: EMPTY_PITS14,
+      displayScore: EMPTY_SCORE,
+      displayProtected: EMPTY_PROTECTED14,
+      historyPast: [],
+      historyFuture: [],
+      lastEvents: [],
+      captureFlight: null,
+      animBudgetMs: 0,
+      previewPits: [],
+      previewKind: 'none',
+      p2pRoomCode: null,
+      p2pConnected: false,
+      p2pLobbyStatus: 'idle',
+      p2pLobbyMessage: '',
+      p2pSeq: 0,
+      p2pRemoteName: null,
+      p2pReconnecting: false,
+      inputLocked: false,
+      thinking: false,
+      showResult: false,
+      selectedPit: null,
+      pendingDirection: false,
+    });
+  },
+
+  reconnectP2P: async () => {
+    const cur = get();
+    if (cur.mode !== 'p2p' && cur.p2pLobbyStatus === 'idle') return;
+    if (cur.p2pConnected) return;
+    if (p2pReconnectOpInFlight) return;
+    // Host only re-binds signaling; guest redials
+    if (cur.humanPlayer === 'S' && cur.p2pLobbyStatus !== 'joining') {
+      set({
+        statusMessage: 'Opponent disconnected',
+        statusDetail: cur.p2pRoomCode
+          ? `Room ${cur.p2pRoomCode} — waiting for ${cur.p2pRemoteName || 'opponent'} to rejoin…`
+          : 'Waiting for opponent to rejoin…',
+        inputLocked: true,
+        p2pReconnecting: false,
+      });
+      try {
+        await p2pReconnect({
+          code: cur.p2pRoomCode || undefined,
+          playerName: cur.p2pLocalName,
+        });
+      } catch {
+        /* host wait is passive */
+      }
+      return;
+    }
+    p2pReconnectOpInFlight = true;
+    set({
+      p2pReconnecting: true,
+      statusMessage: 'Reconnecting…',
+      statusDetail: cur.p2pRoomCode
+        ? `Room ${cur.p2pRoomCode} — trying to reach ${cur.p2pRemoteName || 'opponent'}…`
+        : 'Trying to reconnect…',
+      inputLocked: true,
+    });
+    try {
+      const res = await p2pReconnect({
+        code: cur.p2pRoomCode || undefined,
+        playerName: cur.p2pLocalName,
+      });
+      if (!res.ok) {
+        set({
+          p2pReconnecting: false,
+          statusMessage: 'Disconnected',
+          statusDetail: res.error || 'Reconnect failed. Try again or leave the room.',
+          inputLocked: true,
+        });
+        return;
+      }
+      // Guest: peer_reconnected / STATE clears p2pReconnecting
+    } catch (err) {
+      set({
+        p2pReconnecting: false,
+        statusMessage: 'Disconnected',
+        statusDetail: err instanceof Error ? err.message : String(err),
+        inputLocked: true,
+      });
+    } finally {
+      p2pReconnectOpInFlight = false;
+    }
+  },
+
   selectPit: (pit) => {
     const { committed, inputLocked, mode, humanPlayer, thinking } = get();
     if (!committed || inputLocked || thinking || humanMoveInFlight || isTerminal(committed))
       return;
-    if (mode === 'ai' && committed.toMove !== humanPlayer) {
+    if ((mode === 'ai' || mode === 'p2p') && committed.toMove !== humanPlayer) {
       set({
-        statusDetail: "Wait for the AI's turn to finish.",
+        statusDetail:
+          mode === 'p2p' ? "Wait for your opponent's turn." : "Wait for the AI's turn to finish.",
       });
       return;
     }
@@ -542,6 +920,7 @@ export const useGameStore = create<GameSession>((set, get) => ({
 
   undo: () => {
     const s = get();
+    if (s.mode === 'p2p') return;
     if (s.historyPast.length === 0 || !s.committed) return;
     abortAnim();
     const past = [...s.historyPast];
@@ -588,9 +967,7 @@ export const useGameStore = create<GameSession>((set, get) => ({
       showResult: isTerminal(current),
       statusMessage: isTerminal(current) ? 'Game over' : 'Undid move',
       statusDetail: isTerminal(current)
-        ? outcomeStatusDetail(
-            matchOutcome(current, { mode: s.mode, humanPlayer: s.humanPlayer }),
-          )
+        ? outcomeStatusDetail(matchOutcome(current, outcomeMeta(s)))
         : you
           ? 'Your turn again.'
           : s.mode === 'hotseat'
@@ -602,6 +979,7 @@ export const useGameStore = create<GameSession>((set, get) => ({
 
   redo: () => {
     const s = get();
+    if (s.mode === 'p2p') return;
     if (s.historyFuture.length === 0) return;
     abortAnim();
     const future = [...s.historyFuture];
@@ -650,9 +1028,7 @@ export const useGameStore = create<GameSession>((set, get) => ({
       turnPhase: phaseAfterState(current, s),
       statusMessage: isTerminal(current) ? 'Game over' : 'Redid move',
       statusDetail: isTerminal(current)
-        ? outcomeStatusDetail(
-            matchOutcome(current, { mode: s.mode, humanPlayer: s.humanPlayer }),
-          )
+        ? outcomeStatusDetail(matchOutcome(current, outcomeMeta(s)))
         : you
           ? 'Your turn again.'
           : s.mode === 'hotseat'
@@ -665,6 +1041,37 @@ export const useGameStore = create<GameSession>((set, get) => ({
   resign: () => {
     const s = get();
     if (!s.committed || isTerminal(s.committed)) return;
+    if (s.mode === 'p2p') {
+      void (async () => {
+        try {
+          const res = await p2pPlay({ type: 'resign' });
+          if (res.ok === false) {
+            useGameStore.setState({
+              statusDetail: res.detail || res.error || 'Resign failed',
+            });
+            return;
+          }
+          if (res.pending) {
+            scheduleP2PUnlockTimeout(s.p2pSeq);
+            return;
+          }
+          if (res.state) {
+            const ev = Array.isArray(res.events) ? (res.events as MoveEvent[]) : [];
+            await applyP2PUpdate({
+              state: res.state as GameState,
+              events: ev.length <= 200 ? ev : [],
+              seq: res.seq ?? s.p2pSeq + 1,
+              animate: ev.length > 0 && ev.length <= 200,
+            });
+          }
+        } catch (err) {
+          useGameStore.setState({
+            statusDetail: err instanceof Error ? err.message : String(err),
+          });
+        }
+      })();
+      return;
+    }
     abortAnim();
     const player = s.mode === 'ai' ? s.humanPlayer : s.committed.toMove;
     const { state, events } = engineResign(s.committed, player);
@@ -775,7 +1182,7 @@ async function playHumanMove(move: Move) {
   // (AI / pass / anim). humanMoveInFlight covers double-submit before lock sticks.
   if (!s.committed || s.thinking || s.inputLocked) return;
   if (isTerminal(s.committed)) return;
-  if (s.mode === 'ai' && s.committed.toMove !== s.humanPlayer) return;
+  if ((s.mode === 'ai' || s.mode === 'p2p') && s.committed.toMove !== s.humanPlayer) return;
 
   const legal = getLegalMoves(s.committed);
   if (!legal.some((m) => m.startPit === move.startPit && m.direction === move.direction)) {
@@ -792,6 +1199,53 @@ async function playHumanMove(move: Move) {
     pendingDirection: false,
   });
   try {
+    // P2P: engine authority lives on host worker; animate from returned/broadcast events
+    if (s.mode === 'p2p') {
+      if (!s.p2pConnected) {
+        useGameStore.setState({
+          inputLocked: false,
+          statusDetail: 'Waiting for opponent to join…',
+        });
+        return;
+      }
+      try {
+        const res = await p2pPlay({ type: 'move', move });
+        if (res.ok === false) {
+          useGameStore.setState({
+            inputLocked: false,
+            statusDetail: res.detail || res.error || 'Move rejected',
+          });
+          return;
+        }
+        if (res.state) {
+          const ev = Array.isArray(res.events) ? (res.events as MoveEvent[]) : [];
+          await applyP2PUpdate({
+            state: res.state as GameState,
+            events: ev.length <= 200 ? ev : [],
+            seq: res.seq ?? s.p2pSeq + 1,
+            animate: ev.length > 0 && ev.length <= 200,
+          });
+        } else if (res.pending) {
+          useGameStore.setState({
+            statusMessage: 'Move sent',
+            statusDetail: 'Waiting for host…',
+          });
+          scheduleP2PUnlockTimeout(useGameStore.getState().p2pSeq);
+        } else {
+          useGameStore.setState({
+            inputLocked: false,
+            statusDetail: 'Unexpected response from host.',
+          });
+        }
+      } catch (err) {
+        useGameStore.setState({
+          inputLocked: false,
+          statusDetail: err instanceof Error ? err.message : String(err),
+        });
+      }
+      return;
+    }
+
     let state: GameState;
     let events: MoveEvent[];
     try {
@@ -802,7 +1256,7 @@ async function playHumanMove(move: Move) {
     }
     pushHistory(prev);
     await commitAndAnimate(state, events, {
-      actor: playerLabel(prev.toMove, s.mode, s.humanPlayer),
+      actor: playerLabel(prev.toMove, s.mode, s.humanPlayer, p2pNames(s)),
       isAi: false,
       captureSide: prev.toMove,
     });
@@ -878,31 +1332,59 @@ function phaseAfterState(
     if (state.toMove === session.humanPlayer) return 'your-turn';
     return 'ai-thinking';
   }
+  if (session.mode === 'p2p') {
+    return state.toMove === session.humanPlayer ? 'your-turn' : 'hotseat-turn';
+  }
   return 'hotseat-turn';
+}
+
+function p2pNames(session: Pick<GameSession, 'p2pLocalName' | 'p2pRemoteName'>) {
+  return { local: session.p2pLocalName, remote: session.p2pRemoteName };
 }
 
 function statusHeadline(
   state: GameState,
-  session: Pick<GameSession, 'mode' | 'humanPlayer'>,
+  session: Pick<
+    GameSession,
+    'mode' | 'humanPlayer' | 'p2pRoomCode' | 'p2pConnected' | 'p2pLocalName' | 'p2pRemoteName'
+  >,
 ): string {
   if (isTerminal(state)) return 'Game over';
   if (needsSecondSowing(state)) {
-    const who = playerLabel(state.toMove, session.mode, session.humanPlayer);
-    return who === 'You' ? 'Capture! Sow again' : `${who}: second sowing`;
+    const who = playerLabel(
+      state.toMove,
+      session.mode,
+      session.humanPlayer,
+      p2pNames(session),
+    );
+    return who === session.p2pLocalName || who === 'You'
+      ? 'Capture! Sow again'
+      : `${who}: second sowing`;
   }
   if (session.mode === 'ai') {
     return state.toMove === session.humanPlayer ? 'Your turn' : "AI's turn";
+  }
+  if (session.mode === 'p2p') {
+    if (!session.p2pConnected) return 'Waiting for opponent';
+    if (state.toMove === session.humanPlayer) return 'Your turn';
+    return `${session.p2pRemoteName || 'Opponent'}'s turn`;
   }
   return `${state.toMove === 'S' ? 'South' : 'North'} to move`;
 }
 
 function statusDetailFor(
   state: GameState,
-  session: Pick<GameSession, 'mode' | 'humanPlayer'>,
+  session: Pick<
+    GameSession,
+    'mode' | 'humanPlayer' | 'p2pRoomCode' | 'p2pConnected' | 'p2pLocalName' | 'p2pRemoteName'
+  >,
 ): string {
   if (isTerminal(state)) return '';
   if (needsSecondSowing(state)) {
-    if (session.mode === 'ai' && state.toMove === session.humanPlayer) {
+    if (
+      (session.mode === 'ai' || session.mode === 'p2p') &&
+      state.toMove === session.humanPlayer
+    ) {
       return 'You captured — you must sow again from a legal pit.';
     }
     return 'Forced second sowing after a capture.';
@@ -913,7 +1395,606 @@ function statusDetailFor(
   if (session.mode === 'ai') {
     return aiRowHint(session.humanPlayer);
   }
+  if (session.mode === 'p2p') {
+    if (!session.p2pConnected) {
+      return session.p2pRoomCode
+        ? `Room ${session.p2pRoomCode} — share this code with a friend.`
+        : 'Connecting…';
+    }
+    return state.toMove === session.humanPlayer
+      ? humanRowHint(session.humanPlayer)
+      : `${session.p2pRemoteName || 'Opponent'} is thinking.`;
+  }
   return 'Pick a pit on your row.';
+}
+
+let p2pSubscribed = false;
+/** Prevents double-click host/join before React re-renders disabled buttons. */
+let p2pLobbyOpInFlight = false;
+/** Prevents stacked reconnect dials (status auto-reconnect + UI button). */
+let p2pReconnectOpInFlight = false;
+/** Serial queue without retaining an unbounded promise chain (memory). */
+let p2pQueueBusy = false;
+const p2pQueue: Array<() => Promise<void>> = [];
+const P2P_QUEUE_MAX = 8;
+const p2pPendingTimeouts = new Set<ReturnType<typeof setTimeout>>();
+
+function clearP2PPendingTimeouts() {
+  for (const t of p2pPendingTimeouts) clearTimeout(t);
+  p2pPendingTimeouts.clear();
+}
+
+function scheduleP2PUnlockTimeout(seqAtSend: number) {
+  const t = window.setTimeout(() => {
+    p2pPendingTimeouts.delete(t);
+    const cur = useGameStore.getState();
+    if (
+      cur.mode === 'p2p' &&
+      cur.inputLocked &&
+      cur.p2pSeq === seqAtSend &&
+      !cur.showResult
+    ) {
+      useGameStore.setState({
+        inputLocked: false,
+        statusDetail: cur.p2pConnected
+          ? 'No response from host — try again.'
+          : 'Disconnected from peer.',
+      });
+    }
+  }, 12_000);
+  p2pPendingTimeouts.add(t);
+}
+
+function enqueueP2P(task: () => Promise<void>) {
+  if (p2pQueue.length >= P2P_QUEUE_MAX) {
+    // Drop oldest non-running work — prefer freshest board state
+    p2pQueue.shift();
+  }
+  p2pQueue.push(task);
+  void drainP2PQueue();
+}
+
+async function drainP2PQueue() {
+  if (p2pQueueBusy) return;
+  p2pQueueBusy = true;
+  try {
+    while (p2pQueue.length > 0) {
+      const task = p2pQueue.shift()!;
+      try {
+        await task();
+      } catch (err) {
+        console.error('[p2p game]', err);
+      }
+    }
+  } finally {
+    p2pQueueBusy = false;
+  }
+}
+
+function ensureP2PSubscriptions() {
+  if (p2pSubscribed || !isP2PAvailable()) return;
+  p2pSubscribed = true;
+  onP2PGame((g) => {
+    enqueueP2P(() => handleP2PGameEvent(g));
+  });
+  onP2PMatchReady((m) => {
+    enqueueP2P(() => startP2PMatchWhenPeerReady(m));
+  });
+  onP2PStatus((s) => {
+    // Ignore heartbeat pongs (noise)
+    if (s.status === 'pong') return;
+
+    // Host data-channel open is not a match join — wait for HELLO / match_ready
+    if (s.status === 'channel_open') {
+      return;
+    }
+
+    const disconnected =
+      s.status === 'peer_disconnected' || s.status === 'peer_goodbye';
+    const reconnecting =
+      s.status === 'reconnecting' || s.status === 'peer_reconnecting';
+    const reconnected = s.status === 'peer_reconnected';
+    const connected =
+      !disconnected &&
+      !reconnecting &&
+      Boolean(
+        (s.connected && s.status !== 'channel_open') ||
+          s.status === 'peer_connected' ||
+          reconnected,
+      );
+
+    let guestShouldReconnect = false;
+
+    useGameStore.setState((cur) => {
+      // Lobby waiting (still on home)
+      if (cur.screen === 'home' && (cur.p2pLobbyStatus === 'hosting' || cur.p2pLobbyStatus === 'joining')) {
+        if (disconnected) {
+          // Guest still joining: transport should redial (web auto; desktop via reconnectP2P)
+          if (cur.p2pLobbyStatus === 'joining') guestShouldReconnect = true;
+          return {
+            p2pConnected: false,
+            p2pReconnecting: cur.p2pLobbyStatus === 'joining',
+            p2pLocalName: preferPlayerName(s.localPlayerName, cur.p2pLocalName),
+            // Host keeps waiting for reconnect / new guest; don't wipe name for host
+            p2pRemoteName:
+              cur.p2pLobbyStatus === 'hosting' ? cur.p2pRemoteName : cur.p2pRemoteName,
+            p2pLobbyMessage:
+              cur.p2pLobbyStatus === 'hosting'
+                ? `Room ${cur.p2pRoomCode || '—'} — opponent left. Waiting for them to rejoin…`
+                : 'Disconnected from host — reconnecting…',
+          };
+        }
+        // Host lobby: remember guest name as soon as HELLO is seen (desktop peer_hello)
+        if (
+          cur.p2pLobbyStatus === 'hosting' &&
+          (s.status === 'peer_hello' || s.status === 'peer_connected') &&
+          s.remotePlayerName
+        ) {
+          return {
+            p2pRemoteName: s.remotePlayerName,
+            p2pLobbyMessage: `${s.remotePlayerName} is joining…`,
+          };
+        }
+        if (s.remotePlayerName && cur.p2pLobbyStatus === 'joining') {
+          return { p2pRemoteName: s.remotePlayerName };
+        }
+        if (connected && cur.p2pLobbyStatus === 'joining') {
+          return {
+            p2pConnected: true,
+            p2pReconnecting: false,
+            p2pLobbyMessage: s.remotePlayerName
+              ? `Connected to ${s.remotePlayerName} — loading board…`
+              : `Found host — syncing board…`,
+          };
+        }
+        return {};
+      }
+
+      if (cur.mode !== 'p2p') return {};
+      const room = s.roomCode || cur.p2pRoomCode;
+      const who = s.remotePlayerName ?? cur.p2pRemoteName;
+      const localKeep = preferPlayerName(s.localPlayerName, cur.p2pLocalName);
+
+      if (reconnecting) {
+        return {
+          p2pConnected: false,
+          p2pReconnecting: true,
+          p2pRoomCode: room,
+          p2pRemoteName: who,
+          p2pLocalName: localKeep,
+          statusMessage: 'Reconnecting…',
+          statusDetail: room
+            ? `Room ${room} — trying to reach ${who || 'opponent'}…`
+            : 'Trying to reconnect…',
+          inputLocked: true,
+        };
+      }
+
+      if (disconnected) {
+        // Guest mid-match must rejoin; host waits for peer
+        if (cur.humanPlayer === 'N') guestShouldReconnect = true;
+        return {
+          p2pConnected: false,
+          p2pReconnecting: cur.humanPlayer === 'N',
+          p2pRoomCode: room,
+          p2pRemoteName: who,
+          p2pLocalName: localKeep,
+          statusMessage: 'Opponent disconnected',
+          statusDetail: who
+            ? cur.humanPlayer === 'N'
+              ? `Reconnecting to ${who} (room ${room || '—'})…`
+              : `Waiting for ${who} to rejoin room ${room || '—'}…`
+            : cur.humanPlayer === 'N'
+              ? `Reconnecting to room ${room || '—'}…`
+              : `Waiting for peer to rejoin room ${room || '—'}…`,
+          inputLocked: true,
+        };
+      }
+
+      if (connected || reconnected) {
+        const next = {
+          ...cur,
+          p2pConnected: true,
+          p2pReconnecting: false,
+          p2pRoomCode: room,
+          p2pRemoteName: who,
+          p2pLocalName: localKeep,
+        };
+        return {
+          p2pConnected: true,
+          p2pReconnecting: false,
+          p2pRoomCode: room,
+          p2pRemoteName: who,
+          p2pLocalName: localKeep,
+          statusMessage: cur.committed
+            ? statusHeadline(cur.committed, next)
+            : reconnected
+              ? 'Reconnected'
+              : who
+                ? `Connected to ${who}`
+                : 'Peer online',
+          statusDetail: cur.committed
+            ? statusDetailFor(cur.committed, next)
+            : who
+              ? `Playing ${who}`
+              : 'Opponent is back',
+          // Host can resume after HELLO; guest stays locked until STATE resync
+          inputLocked:
+            cur.humanPlayer === 'S' && cur.committed ? false : cur.inputLocked,
+        };
+      }
+
+      return {};
+    });
+
+    // Guest auto-reconnect (desktop Pear + backup for web)
+    if (guestShouldReconnect) {
+      queueMicrotask(() => {
+        const g = useGameStore.getState();
+        if (g.p2pConnected || p2pReconnectOpInFlight) return;
+        if (g.p2pLobbyStatus === 'joining' || (g.mode === 'p2p' && g.humanPlayer === 'N')) {
+          void g.reconnectP2P();
+        }
+      });
+    }
+  });
+  onP2PError((message) => {
+    useGameStore.setState({
+      statusDetail: message,
+      inputLocked: false,
+      p2pLobbyMessage: message,
+    });
+  });
+  onP2PReject((reason) => {
+    useGameStore.setState({
+      inputLocked: false,
+      thinking: false,
+      statusDetail: reason,
+    });
+  });
+}
+
+/** Host: peer HELLO received — open the real match board. */
+async function startP2PMatchWhenPeerReady(m: {
+  localPlayerName?: string;
+  remotePlayerName?: string | null;
+  roomCode?: string | null;
+  role?: 'host' | 'guest' | null;
+  localSide?: 'S' | 'N' | null;
+}) {
+  const cur = useGameStore.getState();
+  // Host opens on match_ready; guest opens on first STATE (handleP2PGameEvent)
+  if (cur.screen === 'game' && cur.mode === 'p2p') {
+    useGameStore.setState({
+      p2pRemoteName: m.remotePlayerName ?? cur.p2pRemoteName,
+      p2pLocalName: m.localPlayerName || cur.p2pLocalName,
+      p2pConnected: true,
+    });
+    return;
+  }
+  if (cur.p2pLobbyStatus !== 'hosting') {
+    // Guest: store names from WELCOME; board opens on STATE
+    if (cur.p2pLobbyStatus === 'joining') {
+      const remote = m.remotePlayerName ?? cur.p2pRemoteName;
+      useGameStore.setState({
+        p2pLocalName: m.localPlayerName || cur.p2pLocalName,
+        p2pRemoteName: remote,
+        p2pConnected: true,
+        p2pLobbyMessage: `Connected to ${remote || 'host'} — loading board…`,
+      });
+    }
+    return;
+  }
+  try {
+    const snap = await p2pSnapshot();
+    const hostState = (snap?.state as GameState) || null;
+    const initialSeq = typeof snap?.seq === 'number' ? snap.seq : 1;
+    const localName =
+      m.localPlayerName ||
+      snap.localPlayerName ||
+      cur.p2pLocalName ||
+      'Player';
+    const remoteName =
+      m.remotePlayerName ?? snap.remotePlayerName ?? cur.p2pRemoteName;
+    openP2PMatch({
+      roomCode: m.roomCode || cur.p2pRoomCode || '',
+      human: 'S',
+      role: 'host',
+      state: hostState,
+      connected: true,
+      initialSeq,
+      localName,
+      remoteName,
+    });
+    useGameStore.setState({
+      p2pLocalName: localName,
+      p2pRemoteName: remoteName,
+      p2pConnected: true,
+      p2pReconnecting: false,
+      statusMessage: 'Your turn',
+      statusDetail: `Playing ${remoteName || 'opponent'} — room ${m.roomCode || cur.p2pRoomCode}`,
+      turnPhase:
+        hostState && hostState.toMove === 'S' ? 'your-turn' : 'hotseat-turn',
+    });
+  } catch (err) {
+    useGameStore.setState({
+      p2pLobbyStatus: 'error',
+      p2pLobbyMessage: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+function openP2PMatch(opts: {
+  roomCode: string;
+  human: PlayerId;
+  role: 'host' | 'guest';
+  state: GameState | null;
+  connected: boolean;
+  /** Initial sync seq so early STATE events are not double-applied */
+  initialSeq?: number;
+  localName?: string;
+  remoteName?: string | null;
+}) {
+  const gen = useGameStore.getState().animationGeneration + 1;
+  const committed = opts.state;
+  const prot = committed?.protectedMask;
+  const prev = useGameStore.getState();
+  useGameStore.setState({
+    screen: 'game',
+    mode: 'p2p',
+    humanPlayer: opts.human,
+    p2pLocalName: opts.localName || prev.p2pLocalName,
+    p2pRemoteName:
+      opts.remoteName !== undefined ? opts.remoteName : prev.p2pRemoteName,
+    committed,
+    displayPits: committed ? committed.pits.slice() : EMPTY_PITS14,
+    displayScore: committed
+      ? { S: committed.score.S, N: committed.score.N, E: committed.score.E ?? 0 }
+      : EMPTY_SCORE,
+    displayProtected:
+      prot && prot.some(Boolean) ? prot.slice() : EMPTY_PROTECTED14,
+    displayRound: committed ? committed.roundIndex : 0,
+    historyPast: [],
+    historyFuture: [],
+    inputLocked: false,
+    thinking: false,
+    turnPhase: committed
+      ? phaseAfterState(committed, { mode: 'p2p', humanPlayer: opts.human })
+      : 'hotseat-turn',
+    highlightPit: null,
+    highlightPitsExtra: [],
+    highlightKind: 'none',
+    highlightDir: null,
+    displayHand: null,
+    captureFlight: null,
+    animBudgetMs: 0,
+    lastCaptureSide: null,
+    selectedPit: null,
+    pendingDirection: false,
+    animationGeneration: gen,
+    lastEvents: [],
+    showResult: false,
+    lastMatchEndReason: null,
+    previewPits: [],
+    previewKind: 'none',
+    searchCancelled: true,
+    p2pRoomCode: opts.roomCode,
+    p2pConnected: opts.connected,
+    p2pSeq: typeof opts.initialSeq === 'number' ? opts.initialSeq : 0,
+    p2pLobbyStatus: 'idle',
+    p2pLobbyMessage: '',
+  });
+}
+
+async function handleP2PGameEvent(g: P2PGamePayload) {
+  const cur = useGameStore.getState();
+
+  const namePatch: Partial<GameSession> = {};
+  if (g.remotePlayerName) namePatch.p2pRemoteName = g.remotePlayerName;
+  if (g.localPlayerName) {
+    namePatch.p2pLocalName = preferPlayerName(g.localPlayerName, cur.p2pLocalName);
+  }
+
+  // Guest still on home lobby: first STATE opens the match
+  if (cur.mode !== 'p2p') {
+    if (
+      cur.p2pLobbyStatus === 'joining' &&
+      g.state &&
+      isValidGameState(g.state) &&
+      (g.reason === 'welcome' ||
+        g.reason === 'reconnect' ||
+        g.reason === 'state' ||
+        g.seq)
+    ) {
+      const remote =
+        g.remotePlayerName || cur.p2pRemoteName || namePatch.p2pRemoteName || null;
+      const local = preferPlayerName(g.localPlayerName, cur.p2pLocalName);
+      openP2PMatch({
+        roomCode: cur.p2pRoomCode || g.roomCode || '',
+        human: 'N',
+        role: 'guest',
+        state: g.state,
+        connected: true,
+        initialSeq: typeof g.seq === 'number' ? g.seq : 0,
+        localName: local,
+        remoteName: remote,
+      });
+      useGameStore.setState({
+        p2pLocalName: local,
+        p2pRemoteName: remote,
+        p2pConnected: true,
+        p2pReconnecting: false,
+        statusMessage: g.yourTurn ? 'Your turn' : `${remote || 'Opponent'}'s turn`,
+        statusDetail: `Playing ${remote || 'host'} — room ${cur.p2pRoomCode || ''}`,
+        turnPhase: phaseAfterState(g.state, {
+          mode: 'p2p',
+          humanPlayer: 'N',
+        }),
+      });
+      return;
+    }
+    if (Object.keys(namePatch).length) useGameStore.setState(namePatch);
+    return;
+  }
+
+  if (Object.keys(namePatch).length) {
+    useGameStore.setState(namePatch);
+  }
+
+  if (g.localSide && g.localSide !== cur.humanPlayer) {
+    useGameStore.setState({ humanPlayer: g.localSide });
+  }
+
+  if (!g.state || !isValidGameState(g.state)) return;
+  const seq = g.seq ?? 0;
+  // Host already applied via play() response — skip duplicate broadcast of same seq
+  // (except reconnect resync which re-sends the current board)
+  if (seq > 0 && seq <= cur.p2pSeq && g.reason !== 'reconnect') {
+    if (g.yourTurn != null) {
+      const next = { ...useGameStore.getState(), p2pConnected: true, ...namePatch };
+      useGameStore.setState({
+        p2pConnected: true,
+        p2pReconnecting: false,
+        statusMessage: next.committed
+          ? statusHeadline(next.committed as GameState, next)
+          : cur.statusMessage,
+      });
+    }
+    return;
+  }
+
+  const state = g.state;
+  const events = (g.events || []) as MoveEvent[];
+  // Cap animation payload — huge sowing chains are applied as snapshots
+  const animate =
+    events.length > 0 &&
+    events.length <= 200 &&
+    g.reason !== 'welcome' &&
+    g.reason !== 'host_create' &&
+    g.reason !== 'snapshot' &&
+    g.reason !== 'reconnect';
+  // Reconnect may re-send same seq — force apply by lowering local watermark
+  if (g.reason === 'reconnect' && seq > 0 && seq <= cur.p2pSeq) {
+    useGameStore.setState({ p2pSeq: Math.max(0, seq - 1) });
+  }
+  await applyP2PUpdate({
+    state,
+    events: animate ? events : [],
+    seq,
+    animate,
+  });
+  if (g.reason === 'reconnect' || g.reason === 'welcome') {
+    const after = useGameStore.getState();
+    useGameStore.setState({
+      p2pConnected: true,
+      p2pReconnecting: false,
+      inputLocked: false,
+      statusMessage: after.committed
+        ? statusHeadline(after.committed, { ...after, p2pConnected: true })
+        : 'Reconnected',
+      statusDetail: after.committed
+        ? statusDetailFor(after.committed, { ...after, p2pConnected: true })
+        : '',
+    });
+  }
+}
+
+async function applyP2PUpdate(opts: {
+  state: GameState;
+  events: MoveEvent[];
+  seq: number;
+  animate: boolean;
+}) {
+  const { state, events, seq, animate } = opts;
+  const s = useGameStore.getState();
+  if (s.mode !== 'p2p') return;
+
+  // Ignore stale or already-applied seq (prevents double-apply races)
+  if (seq > 0 && seq <= s.p2pSeq) return;
+
+  useGameStore.setState({ p2pSeq: Math.max(s.p2pSeq, seq), p2pConnected: true });
+
+  if (animate && events.length > 0) {
+    const actorSide = s.committed?.toMove ?? s.humanPlayer;
+    await commitAndAnimate(state, events, {
+      actor: playerLabel(actorSide, 'p2p', s.humanPlayer, p2pNames(s)),
+      isAi: actorSide !== s.humanPlayer,
+      captureSide: actorSide,
+    });
+    // Drop event list after anim — frees move-event arrays held in store
+    clearP2PPendingTimeouts();
+    useGameStore.setState({ lastEvents: [], historyPast: [], historyFuture: [] });
+  } else {
+    // Snapshot board (welcome / first join) — no history growth in p2p
+    clearP2PPendingTimeouts();
+    const protectedMask = state.protectedMask;
+    useGameStore.setState({
+      committed: state,
+      displayPits: state.pits.slice(),
+      displayScore: {
+        S: state.score.S,
+        N: state.score.N,
+        E: state.score.E ?? 0,
+      },
+      // Shared empty mask when nothing is protected (read-only consumers)
+      displayProtected:
+        protectedMask && protectedMask.some(Boolean)
+          ? protectedMask.slice()
+          : EMPTY_PROTECTED14,
+      displayRound: state.roundIndex,
+      historyPast: [],
+      historyFuture: [],
+      lastEvents: [],
+      inputLocked: false,
+      thinking: false,
+      turnPhase: phaseAfterState(state, s),
+      selectedPit: null,
+      pendingDirection: false,
+      highlightPit: null,
+      highlightPitsExtra: [],
+      highlightKind: 'none',
+      displayHand: null,
+      captureFlight: null,
+      animBudgetMs: 0,
+      previewPits: [],
+      previewKind: 'none',
+      showResult: isTerminal(state),
+      statusMessage: statusHeadline(state, { ...s, p2pConnected: true }),
+      statusDetail: statusDetailFor(state, { ...s, p2pConnected: true }),
+    });
+    if (isTerminal(state)) {
+      enterMatchOver(state, { mode: 'p2p', humanPlayer: s.humanPlayer });
+    }
+  }
+
+  // Auto-pass when local player has empty row
+  const after = useGameStore.getState();
+  if (
+    after.mode === 'p2p' &&
+    after.committed &&
+    !isTerminal(after.committed) &&
+    after.committed.toMove === after.humanPlayer &&
+    getLegalMoves(after.committed).length === 0
+  ) {
+    try {
+      const res = await p2pPlay({ type: 'pass' });
+      if (res.pending) {
+        scheduleP2PUnlockTimeout(after.p2pSeq);
+        return;
+      }
+      if (res.state) {
+        const ev = (res.events || []) as MoveEvent[];
+        await applyP2PUpdate({
+          state: res.state as GameState,
+          events: ev.length <= 200 ? ev : [],
+          seq: res.seq ?? after.p2pSeq + 1,
+          animate: ev.length > 0 && ev.length <= 200,
+        });
+      }
+    } catch {
+      useGameStore.setState({ inputLocked: false });
+    }
+  }
 }
 
 async function playEvents(
@@ -1164,11 +2245,10 @@ async function playEvents(
         const session = useGameStore.getState();
         const detail = session.committed
           ? outcomeStatusDetail(
-              matchOutcome(session.committed, {
-                mode: session.mode,
-                humanPlayer: session.humanPlayer,
-                endReason,
-              }),
+              matchOutcome(
+                session.committed,
+                outcomeMeta({ ...session, endReason }),
+              ),
             )
           : '';
         useGameStore.setState({
@@ -1205,7 +2285,16 @@ async function resolveNonHumanOrPass() {
 
     const moves = getLegalMoves(s.committed);
     if (moves.length === 0) {
-      const who = playerLabel(s.committed.toMove, s.mode, s.humanPlayer);
+      // P2P: only the local player submits a pass when it's their turn
+      if (s.mode === 'p2p' && s.committed.toMove !== s.humanPlayer) {
+        return;
+      }
+      const who = playerLabel(
+        s.committed.toMove,
+        s.mode,
+        s.humanPlayer,
+        p2pNames(s),
+      );
       useGameStore.setState({
         turnPhase: 'pass',
         statusMessage: `${who} passes`,
@@ -1229,6 +2318,27 @@ async function resolveNonHumanOrPass() {
         useGameStore.setState({ inputLocked: false });
         continue;
       }
+      if (s.mode === 'p2p') {
+        try {
+          const res = await p2pPlay({ type: 'pass' });
+          if (res.pending) {
+            scheduleP2PUnlockTimeout(s.p2pSeq);
+            return;
+          }
+          if (res.state) {
+            const ev = (res.events || []) as MoveEvent[];
+            await applyP2PUpdate({
+              state: res.state as GameState,
+              events: ev.length <= 200 ? ev : [],
+              seq: res.seq ?? s.p2pSeq + 1,
+              animate: ev.length > 0 && ev.length <= 200,
+            });
+          }
+        } catch {
+          useGameStore.setState({ inputLocked: false, thinking: false });
+        }
+        continue;
+      }
       let state: GameState;
       let events: MoveEvent[];
       try {
@@ -1243,6 +2353,11 @@ async function resolveNonHumanOrPass() {
         isAi: s.mode === 'ai' && prev.toMove !== s.humanPlayer,
       });
       continue;
+    }
+
+    if (s.mode === 'p2p') {
+      // Remote opponent plays — wait for STATE over peer protocol
+      return;
     }
 
     if (s.mode === 'ai' && s.committed.toMove !== s.humanPlayer) {
