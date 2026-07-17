@@ -1,0 +1,7 @@
+{
+  "multisig": {
+    "publicKeys": ["<PUBKEY_HERE>", "<PUBKEY_HERE>", "<PUBKEY_HERE>"],
+    "namespace": "chennamane/pear-desktop",
+    "quorum": 2
+  }
+}
